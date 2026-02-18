@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, anyhow};
-use c_prod_pool::common::{MidenClient, create_basic_account, instantiate_simple_client};
+use c_prod_pool::common::{
+    MidenClient, create_basic_account, deploy_c_prod_pool, instantiate_simple_client,
+};
 use miden_client::store::TransactionFilter;
 use miden_client::{
     Felt, Word,
@@ -26,7 +28,7 @@ pub struct TestSetup {
     pub client: MidenClient,
     /// A freshly created basic account that acts as the test user.
     pub user: Account,
-    // pub pool: Account,
+    pub pool: Account,
     // The first two liquidity pools from the config, used as swap pair.
     // pub pools: Vec<LiquidityPoolConfig>,
 }
@@ -67,6 +69,16 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
     );
     client.sync_state().await?;
 
+    let (c_prod_pool, _) = deploy_c_prod_pool(&mut client, keystore.clone()).await?;
+    println!(
+        "Created C Prod Pool Account ⇒ ID: {:?}",
+        c_prod_pool.id().to_bech32(endpoint.to_network_id())
+    );
+
     // Ok(TestSetup { client, user, pool })
-    Ok(TestSetup { client, user })
+    Ok(TestSetup {
+        client,
+        user,
+        pool: c_prod_pool,
+    })
 }
