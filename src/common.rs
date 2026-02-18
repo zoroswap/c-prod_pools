@@ -13,12 +13,13 @@ use miden_client::{
         Account, AccountBuilder, AccountStorageMode, AccountType, StorageMap, StorageSlot,
         StorageSlotName,
     },
+    asset::TokenSymbol,
     auth::{AuthFalcon512Rpo, AuthSecretKey},
     builder::ClientBuilder,
     keystore::FilesystemKeyStore,
     rpc::GrpcClient,
 };
-use miden_standards::account::wallets::BasicWallet;
+use miden_standards::account::{faucets::BasicFungibleFaucet, wallets::BasicWallet};
 
 use rand::RngCore;
 
@@ -31,6 +32,8 @@ use rusqlite::Connection;
 use std::sync::Arc;
 use std::{fs, path::PathBuf, time::Duration};
 use tracing::{debug, info, warn};
+
+use serde::Deserialize;
 
 use crate::utils::{create_library, slot_name};
 
@@ -389,4 +392,89 @@ pub async fn deploy_c_prod_pool(
         );
     */
     Ok((c_prod_pool_contract, key_pair))
+}
+
+#[derive(Deserialize, Debug)]
+struct FaucetConfig {
+    symbol: String,
+    max_supply: u64,
+    decimals: u8,
+}
+#[derive(Deserialize, Debug)]
+struct FaucetsConfig {
+    pub faucets: Vec<FaucetConfig>,
+}
+
+/// Deploys a single simple fungible faucet. Does not read any config files.
+/// Returns the deployed faucet account.
+pub async fn deploy_simple_faucet(
+    client: &mut MidenClient,
+    keystore: &FilesystemKeyStore,
+    symbol: &str,
+    decimals: u8,
+    max_supply: u64,
+) -> Result<Account> {
+    let symbol = TokenSymbol::new(symbol)
+        .map_err(|e| anyhow!("Failed to create token symbol: {e:?}"))?;
+    let max_supply = Felt::new(max_supply);
+
+    let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
+    let mut init_seed = [0u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+
+    let builder = AccountBuilder::new(init_seed)
+        .account_type(AccountType::FungibleFaucet)
+        .storage_mode(AccountStorageMode::Public)
+        .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
+        .with_component(
+            BasicFungibleFaucet::new(symbol, decimals, max_supply)
+                .map_err(|e| anyhow!("Failed to create BasicFungibleFaucet: {e:?}"))?,
+        );
+
+    let faucet_account = builder
+        .build()
+        .map_err(|e| anyhow!("Failed to build faucet account: {e:?}"))?;
+
+    client.add_account(&faucet_account, true).await?;
+    keystore
+        .add_key(&key_pair)
+        .map_err(|e| anyhow!("Failed to add key to keystore: {e:?}"))?;
+
+    client.sync_state().await?;
+    Ok(faucet_account)
+}
+
+/// Reads `faucets.toml` from the manifest directory and deploys each configured faucet.
+/// Returns the deployed faucet accounts in config order.
+pub async fn deploy_simple_faucets_from_config(
+    client: &mut MidenClient,
+    keystore: &FilesystemKeyStore,
+) -> Result<Vec<Account>> {
+    let sync_summary = client.sync_state().await?;
+    println!("Latest block: {}", sync_summary.block_num);
+
+    let manifest_dir: &str = env!("CARGO_MANIFEST_DIR");
+    let faucet_config_path: PathBuf = [manifest_dir, "faucets.toml"].iter().collect();
+    let faucet_config = fs::read_to_string(&faucet_config_path)
+        .map_err(|e| anyhow!("Error opening {faucet_config_path:?}: {e}"))?;
+
+    let faucet_config: FaucetsConfig = toml::from_str(&faucet_config)?;
+
+    let mut accounts = Vec::with_capacity(faucet_config.faucets.len());
+    for faucet in faucet_config.faucets {
+        println!("Deploying faucet {}.", faucet.symbol);
+        let account = deploy_simple_faucet(
+            client,
+            keystore,
+            &faucet.symbol,
+            faucet.decimals,
+            faucet.max_supply,
+        )
+        .await?;
+        accounts.push(account);
+        println!("Faucet {} successfully deployed.", faucet.symbol);
+    }
+
+    println!("All faucets deployed successfully.");
+    Ok(accounts)
 }

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use c_prod_pool::common::{
-    MidenClient, create_basic_account, deploy_c_prod_pool, instantiate_simple_client,
+    MidenClient, create_basic_account, deploy_c_prod_pool, deploy_simple_faucets_from_config,
+    instantiate_simple_client,
 };
 use miden_client::store::TransactionFilter;
 use miden_client::{
@@ -31,6 +32,7 @@ pub struct TestSetup {
     pub pool: Account,
     // The first two liquidity pools from the config, used as swap pair.
     // pub pools: Vec<LiquidityPoolConfig>,
+    pub faucets: Vec<Account>,
 }
 
 /// Load config, create a Miden client, sync state, and create a fresh basic account.
@@ -61,6 +63,8 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
     let mut client = instantiate_simple_client(keystore_path, &endpoint).await?;
     let keystore = FilesystemKeyStore::new(keystore_path.into())?;
 
+    let faucets = deploy_simple_faucets_from_config(&mut client, &keystore).await?;
+
     println!("\nCreating user account...");
     let (user, _) = create_basic_account(&mut client, keystore.clone()).await?;
     println!(
@@ -80,5 +84,6 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
         client,
         user,
         pool: c_prod_pool,
+        faucets,
     })
 }
