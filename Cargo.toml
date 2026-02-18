@@ -1,0 +1,39 @@
+[package]
+name = "c_prod_pool"
+version = "0.4.1"
+edition = "2024"
+license = "GPL-3.0-only"
+
+[dependencies]
+miden-client = { version = "0.13.1", features = ["testing", "tonic"] }
+miden-client-sqlite-store = { version = "0.13.1" }
+miden-standards = { version = "0.13", default-features = false }
+miden-protocol = { version = "0.13", default-features = false, features = [
+    "testing",
+] }
+miden-assembly = "0.20"
+miden-tx = "0.13"
+rand = { version = "0.9" }
+rand_chacha = "0.9.0"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1.0", features = ["raw_value"] }
+tokio = { version = "1.46", features = [
+    "rt-multi-thread",
+    "net",
+    "macros",
+    "fs",
+] }
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+chrono = { version = "0.4", features = ["serde"] }
+
+# Additional utilities
+anyhow = "1.0"
+base64 = "0.22"
+dotenv = "0.15"
+dashmap = "6.1.0"
+rusqlite = "0.36"
+toml = "0.9.4"
