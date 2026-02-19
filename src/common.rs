@@ -1,23 +1,21 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use miden_client::{
-    ClientError, Felt, Word,
-    account::AccountId,
-    note::{
-        Note, NoteAssets, NoteError, NoteMetadata, NoteRecipient, NoteScreener, NoteTag, NoteType,
-    },
-    sync::StateSync,
-};
-use miden_client::{
-    DebugMode,
+    ClientError, DebugMode, Felt, Word,
     account::{
-        Account, AccountBuilder, AccountStorageMode, AccountType, StorageMap, StorageSlot,
-        StorageSlotName,
+        Account, AccountBuilder, AccountId, AccountStorageMode, AccountType, StorageMap,
+        StorageSlot, StorageSlotName,
     },
-    asset::TokenSymbol,
+    asset::{AssetVault, FungibleAsset, TokenSymbol},
     auth::{AuthFalcon512Rpo, AuthSecretKey},
     builder::ClientBuilder,
     keystore::FilesystemKeyStore,
-    rpc::GrpcClient,
+    note::{
+        Note, NoteAssets, NoteError, NoteMetadata, NoteRecipient, NoteScreener, NoteTag, NoteType,
+    },
+    rpc::{GrpcClient, NodeRpcClient, domain::account::FetchedAccount},
+    store::TransactionFilter,
+    sync::StateSync,
+    transaction::{OutputNote, TransactionRequestBuilder},
 };
 use miden_standards::account::{faucets::BasicFungibleFaucet, wallets::BasicWallet};
 
@@ -35,18 +33,23 @@ use tracing::{debug, info, warn};
 
 use serde::Deserialize;
 
-use crate::utils::{create_library, slot_name};
+use crate::utils::{create_library, fetch_vault_for_account_from_chain, slot_name};
 
 //use crate::{Config, order::OrderType};
 //use zoro_miden_client::{MidenClient, create_library};
 
 use miden_client::{Client, rpc::Endpoint};
 pub type MidenClient = Client<FilesystemKeyStore>;
+pub struct MidenClients {
+    pub client: MidenClient,
+    pub rpc_api: Arc<GrpcClient>,
+    pub endpoint: Endpoint,
+}
 
 pub async fn instantiate_simple_client(
     keystore_path: &str,
     endpoint: &Endpoint,
-) -> Result<MidenClient, ClientError> {
+) -> Result<MidenClients, ClientError> {
     let timeout_ms = 30_000;
     let rpc_api = Arc::new(GrpcClient::new(endpoint, timeout_ms));
     let keystore = FilesystemKeyStore::new(keystore_path.into())
@@ -66,7 +69,11 @@ pub async fn instantiate_simple_client(
     let sync_summary = client.sync_state().await?;
     println!("\nLatest block: {}", sync_summary.block_num);
 
-    Ok(client)
+    Ok(MidenClients {
+        client,
+        rpc_api,
+        endpoint: endpoint.clone(),
+    })
 }
 
 /// Creates a basic regular account with updatable code.
@@ -114,27 +121,6 @@ pub async fn deploy_c_prod_pool(
         .unwrap_or_else(|err| panic!("unable to read from {c_prod_pool_code_path:?}: {err}"));
 
     let assembler = TransactionKernel::assembler().with_warnings_as_errors(true);
-
-    // let mut assets_mapping = StorageSlot::new();
-    // let mut fees_mapping = StorageMap::new();
-
-    // for (i, pool) in config.liquidity_pools.iter().enumerate() {
-    // let fees: Word = [
-    //     Felt::new(200), // swap_fee
-    //     Felt::new(300), // backstop_fee
-    //     Felt::new(0),   // protocol_fee
-    //     Felt::new(0),   // 0
-    // ]
-    // .into();
-
-    // let asset_id = [
-    //     Felt::new(0),
-    //     Felt::new(0),
-    //     pool.faucet_id.suffix(),
-    //     pool.faucet_id.prefix().as_felt(),
-    // ];
-
-    // }
 
     // let fees_mapping = StorageSlot::with_map(n("zoroswap::fees"), fees_mapping);
     let reserves = StorageSlot::with_empty_value(slot_name("zoro::c_prod_pool::reserve"));
@@ -395,14 +381,27 @@ pub async fn deploy_c_prod_pool(
 }
 
 #[derive(Deserialize, Debug)]
-struct FaucetConfig {
-    symbol: String,
-    max_supply: u64,
-    decimals: u8,
+pub struct FaucetConfig {
+    pub symbol: String,
+    pub max_supply: u64,
+    pub decimals: u8,
 }
 #[derive(Deserialize, Debug)]
-struct FaucetsConfig {
+pub struct FaucetsConfig {
     pub faucets: Vec<FaucetConfig>,
+}
+#[derive(Debug)]
+pub struct Faucet {
+    pub faucet: Account,
+    pub config: FaucetConfig,
+}
+
+/// Load faucets config from `faucets.toml` in the manifest directory.
+pub fn load_faucets_config() -> Result<FaucetsConfig> {
+    let manifest_dir: &str = env!("CARGO_MANIFEST_DIR");
+    let path: PathBuf = [manifest_dir, "faucets.toml"].iter().collect();
+    let s = fs::read_to_string(&path).map_err(|e| anyhow!("Error reading {path:?}: {e}"))?;
+    toml::from_str(&s).map_err(Into::into)
 }
 
 /// Deploys a single simple fungible faucet. Does not read any config files.
@@ -414,8 +413,8 @@ pub async fn deploy_simple_faucet(
     decimals: u8,
     max_supply: u64,
 ) -> Result<Account> {
-    let symbol = TokenSymbol::new(symbol)
-        .map_err(|e| anyhow!("Failed to create token symbol: {e:?}"))?;
+    let symbol =
+        TokenSymbol::new(symbol).map_err(|e| anyhow!("Failed to create token symbol: {e:?}"))?;
     let max_supply = Felt::new(max_supply);
 
     let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
@@ -449,7 +448,7 @@ pub async fn deploy_simple_faucet(
 pub async fn deploy_simple_faucets_from_config(
     client: &mut MidenClient,
     keystore: &FilesystemKeyStore,
-) -> Result<Vec<Account>> {
+) -> Result<Vec<Faucet>> {
     let sync_summary = client.sync_state().await?;
     println!("Latest block: {}", sync_summary.block_num);
 
@@ -471,10 +470,101 @@ pub async fn deploy_simple_faucets_from_config(
             faucet.max_supply,
         )
         .await?;
-        accounts.push(account);
-        println!("Faucet {} successfully deployed.", faucet.symbol);
+
+        let transaction_request = TransactionRequestBuilder::new().build()?;
+        let _tx_id = client
+            .submit_new_transaction(account.id(), transaction_request)
+            .await?;
+        println!(
+            "Faucet {} successfully deployed -> ID {:?}",
+            faucet.symbol,
+            // account.id().to_bech32(clients.endpoint.to_network_id()),
+            account.id().to_hex(),
+        );
+
+        accounts.push(Faucet {
+            faucet: account,
+            config: faucet,
+        });
     }
 
     println!("All faucets deployed successfully.");
     Ok(accounts)
+}
+
+pub async fn fund_wallet(
+    clients: &mut MidenClients,
+    account: &Account,
+    asset: &FaucetConfig,
+    asset_id: &AccountId,
+    amount: u64,
+) -> Result<()> {
+    let client = &mut clients.client;
+    let amount: u64 = if amount > 0 {
+        amount
+    } else {
+        5 * 10u64.pow(asset.decimals as u32 - 2)
+    }; // 0.05
+    let fungible_asset = FungibleAsset::new(asset_id.clone(), amount)?;
+    client.import_account_by_id(asset_id.clone()).await?;
+    let transaction_request = TransactionRequestBuilder::new().build_mint_fungible_asset(
+        fungible_asset,
+        account.id(),
+        NoteType::Public,
+        client.rng(),
+    )?;
+    let tx_id = client
+        .submit_new_transaction(asset_id.clone(), transaction_request)
+        .await?;
+    println!("Minted {amount} {} for the user.", asset.symbol);
+    client.sync_state().await?;
+
+    let transaction = client
+        .get_transactions(TransactionFilter::Ids(vec![tx_id]))
+        .await?
+        .pop()
+        .with_context(|| "failed to find transaction {tx_id:?} after submission")
+        .unwrap();
+    let minted_note = match transaction.details.output_notes.get_note(0) {
+        OutputNote::Full(n) => n.clone(),
+        _ => panic!("Expected OutputNote::Full, got something else"),
+    };
+
+    wait_for_note(client, &minted_note).await?;
+
+    let consume_req = TransactionRequestBuilder::new()
+        .input_notes([(minted_note, None)])
+        .build()
+        .unwrap();
+
+    let _tx_id = client
+        .submit_new_transaction(account.id(), consume_req)
+        .await?;
+    client.sync_state().await?;
+    let new_balance_user = fetch_vault_for_account_from_chain(&clients.rpc_api, asset_id).await?;
+    println!("New account vault: {:?}", new_balance_user);
+    println!("User successfully consumed swap into its wallet");
+
+    Ok(())
+}
+
+/// Waits for a specific note to become consumable.
+///
+/// # Arguments
+/// * `client`: Miden client instance
+/// * `_account_id`: Account ID (unused but kept for API compatibility)
+/// * `expected`: The note to wait for
+pub async fn wait_for_note(client: &mut MidenClient, expected: &Note) -> Result<(), ClientError> {
+    loop {
+        client.sync_state().await?;
+        let notes = client.get_consumable_notes(None).await?;
+        let found = notes.iter().any(|(rec, _)| rec.id() == expected.id());
+        if found {
+            info!("Note found {}", expected.id().to_hex());
+            break;
+        }
+        debug!("Note {} not found. Waiting...", expected.id().to_hex());
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+    Ok(())
 }

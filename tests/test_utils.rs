@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use c_prod_pool::common::{
-    MidenClient, create_basic_account, deploy_c_prod_pool, deploy_simple_faucets_from_config,
-    instantiate_simple_client,
+    Faucet, FaucetConfig, MidenClients, create_basic_account, deploy_c_prod_pool,
+    deploy_simple_faucets_from_config, fund_wallet, instantiate_simple_client, load_faucets_config,
 };
 use miden_client::store::TransactionFilter;
 use miden_client::{
@@ -26,13 +26,31 @@ pub struct TestSetup {
     /// Parsed application config (endpoints, pool account ID, oracle URL, etc.).
     // pub config: Config,
     /// Miden client connected to the node and ready to submit transactions.
-    pub client: MidenClient,
+    pub clients: MidenClients,
     /// A freshly created basic account that acts as the test user.
     pub user: Account,
     pub pool: Account,
     // The first two liquidity pools from the config, used as swap pair.
     // pub pools: Vec<LiquidityPoolConfig>,
-    pub faucets: Vec<Account>,
+    pub faucets: Vec<Faucet>,
+}
+
+impl TestSetup {
+    /// Funds the user wallet with the given amount from every configured faucet.
+    pub async fn fund_user_wallet(&mut self, amount: u64) -> Result<()> {
+        self.clients.client.sync_state().await?;
+        for asset in self.faucets.iter() {
+            fund_wallet(
+                &mut self.clients,
+                &self.user,
+                &asset.config,
+                &asset.faucet.id().clone(),
+                amount,
+            )
+            .await?;
+        }
+        Ok(())
+    }
 }
 
 /// Load config, create a Miden client, sync state, and create a fresh basic account.
@@ -60,7 +78,8 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
         _ => Endpoint::localhost(),
     };
 
-    let mut client = instantiate_simple_client(keystore_path, &endpoint).await?;
+    let mut clients = instantiate_simple_client(keystore_path, &endpoint).await?;
+    let mut client = &mut clients.client;
     let keystore = FilesystemKeyStore::new(keystore_path.into())?;
 
     let faucets = deploy_simple_faucets_from_config(&mut client, &keystore).await?;
@@ -68,20 +87,22 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
     println!("\nCreating user account...");
     let (user, _) = create_basic_account(&mut client, keystore.clone()).await?;
     println!(
-        "Created User Account ⇒ ID: {:?}",
-        user.id().to_bech32(endpoint.to_network_id())
+        "Created User Account ⇒ ID: {:?} {:?}",
+        user.id().to_bech32(endpoint.to_network_id()),
+        user.id().to_hex()
     );
     client.sync_state().await?;
 
-    let (c_prod_pool, _) = deploy_c_prod_pool(&mut client, keystore.clone()).await?;
+    let (c_prod_pool, _) = deploy_c_prod_pool(client, keystore.clone()).await?;
     println!(
-        "Created C Prod Pool Account ⇒ ID: {:?}",
-        c_prod_pool.id().to_bech32(endpoint.to_network_id())
+        "Created C Prod Pool Account ⇒ ID: {:?} {:?}",
+        c_prod_pool.id().to_bech32(endpoint.to_network_id()),
+        c_prod_pool.id().to_hex()
     );
 
     // Ok(TestSetup { client, user, pool })
     Ok(TestSetup {
-        client,
+        clients,
         user,
         pool: c_prod_pool,
         faucets,
