@@ -48,6 +48,7 @@ pub struct MidenClients {
 
 pub async fn instantiate_simple_client(
     keystore_path: &str,
+    store_path: &str,
     endpoint: &Endpoint,
 ) -> Result<MidenClients, ClientError> {
     let timeout_ms = 30_000;
@@ -61,7 +62,7 @@ pub async fn instantiate_simple_client(
         .rpc(rpc_api.clone())
         .authenticator(keystore)
         .in_debug_mode(true.into())
-        .sqlite_store("store.sqlite3".into())
+        .sqlite_store(store_path.into())
         .build()
         .await?;
 

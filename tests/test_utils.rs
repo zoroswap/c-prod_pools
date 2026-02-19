@@ -13,7 +13,7 @@ use miden_client::{
     rpc::Endpoint,
     transaction::{OutputNote, TransactionRequestBuilder},
 };
-use std::{env, path::PathBuf};
+use std::{env, fs, path::PathBuf};
 // use url::Url;
 // use zoro_miden_client::{MidenClient, create_basic_account, wait_for_note};
 // use zoroswap::{
@@ -127,19 +127,27 @@ fn build_cached_state(faucets: &[Faucet], user: &Account) -> CachedTestState {
 pub async fn setup_test_environment() -> Result<TestSetup> {
     dotenv::dotenv().ok();
 
-    let keystore_path = "./keystore";
-    let endpoint = env::var("MIDEN_NODE_ENDPOINT").unwrap_or_else(|_| "".to_string());
-    let endpoint = match endpoint.as_str() {
+    let endpoint_label =
+        env::var("MIDEN_NODE_ENDPOINT").unwrap_or_else(|_| "localhost".to_string());
+    let endpoint = match endpoint_label.as_str() {
         "testnet" => Endpoint::testnet(),
         "devnet" => Endpoint::devnet(),
         _ => Endpoint::localhost(),
     };
 
-    let mut clients = instantiate_simple_client(keystore_path, &endpoint).await?;
-    let keys_directory = PathBuf::from(keystore_path);
-    let keystore = FilesystemKeyStore::new(keys_directory.clone())?;
+    let base_dir = PathBuf::from("tmp").join(&endpoint_label);
+    fs::create_dir_all(&base_dir)?;
 
-    let state_path = PathBuf::from("test_state.toml");
+    let keystore_path = base_dir.join("keystore");
+    let store_path = base_dir.join("store.sqlite3");
+    let state_path = base_dir.join("test_state.toml");
+
+    let keystore_str = keystore_path.to_str().unwrap();
+    let store_str = store_path.to_str().unwrap();
+
+    let mut clients = instantiate_simple_client(keystore_str, store_str, &endpoint).await?;
+    let keystore = FilesystemKeyStore::new(keystore_path.clone())?;
+
     let force_fresh = env::var("CLEAN_TEST").map_or(false, |v| v == "1");
 
     let (faucets, user) = if force_fresh {

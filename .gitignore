@@ -1,7 +1,4 @@
 /target
-/keystore
+/tmp
 
 .env
-
-*.sqlite3
-test_state.toml
