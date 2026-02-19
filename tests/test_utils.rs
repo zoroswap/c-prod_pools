@@ -1,9 +1,9 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use c_prod_pool::common::{
-    Faucet, FaucetConfig, MidenClients, create_basic_account, deploy_c_prod_pool,
-    deploy_simple_faucets_from_config, fund_wallet, instantiate_simple_client, load_faucets_config,
+    CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
+    deploy_c_prod_pool, deploy_simple_faucets_from_config, fund_wallet, instantiate_simple_client,
+    load_faucets_config, load_test_state, save_test_state, try_import_account,
 };
-use miden_client::store::TransactionFilter;
 use miden_client::{
     Felt, Word,
     account::{Account, AccountId},
@@ -13,7 +13,7 @@ use miden_client::{
     rpc::Endpoint,
     transaction::{OutputNote, TransactionRequestBuilder},
 };
-use std::{collections::HashMap, env, path::PathBuf, str::FromStr};
+use std::{env, path::PathBuf};
 // use url::Url;
 // use zoro_miden_client::{MidenClient, create_basic_account, wait_for_note};
 // use zoroswap::{
@@ -53,23 +53,80 @@ impl TestSetup {
     }
 }
 
+/// Try to restore faucets and user from a cached test state file.
+/// Returns the reconstructed `(Vec<Faucet>, Account)` on success.
+async fn try_restore_from_cache(
+    clients: &mut MidenClients,
+    state: &CachedTestState,
+) -> Result<(Vec<Faucet>, Account)> {
+    let mut faucets = Vec::with_capacity(state.faucets.len());
+    for s_faucet in &state.faucets {
+        let id = AccountId::from_hex(&s_faucet.account_id_hex)
+            .map_err(|e| anyhow!("Bad cached faucet id '{}': {e}", s_faucet.account_id_hex))?;
+        let account = try_import_account(clients, id).await?;
+        faucets.push(Faucet {
+            faucet: account,
+            config: FaucetConfig {
+                symbol: s_faucet.symbol.clone(),
+                decimals: s_faucet.decimals,
+                max_supply: s_faucet.max_supply,
+            },
+        });
+        println!(
+            "Restored faucet {} ({})",
+            s_faucet.symbol, s_faucet.account_id_hex
+        );
+    }
+
+    let user_id = AccountId::from_hex(&state.user_account_id_hex)
+        .map_err(|e| anyhow!("Bad cached user id '{}': {e}", state.user_account_id_hex))?;
+    let user = try_import_account(clients, user_id).await?;
+    println!("Restored user account ({})", state.user_account_id_hex);
+
+    Ok((faucets, user))
+}
+
+/// Deploy fresh faucets and create a new user account.
+async fn deploy_fresh(
+    clients: &mut MidenClients,
+    keystore: &FilesystemKeyStore,
+) -> Result<(Vec<Faucet>, Account)> {
+    let client = &mut clients.client;
+    let faucets = deploy_simple_faucets_from_config(client, keystore).await?;
+
+    println!("\nCreating user account...");
+    let (user, _) = create_basic_account(client, keystore.clone()).await?;
+    println!(
+        "Created User Account => ID: {:?} {:?}",
+        user.id().to_hex(),
+        user.id()
+    );
+    client.sync_state().await?;
+
+    Ok((faucets, user))
+}
+
+fn build_cached_state(faucets: &[Faucet], user: &Account) -> CachedTestState {
+    CachedTestState {
+        faucets: faucets
+            .iter()
+            .map(|f| CachedFaucet {
+                account_id_hex: f.faucet.id().to_hex(),
+                symbol: f.config.symbol.clone(),
+                decimals: f.config.decimals,
+                max_supply: f.config.max_supply,
+            })
+            .collect(),
+        user_account_id_hex: user.id().to_hex(),
+    }
+}
+
 /// Load config, create a Miden client, sync state, and create a fresh basic account.
+/// Reuses previously deployed faucets and user when a `test_state.toml` cache exists.
+/// Set `FRESH_SETUP=1` to force a clean deployment.
 pub async fn setup_test_environment() -> Result<TestSetup> {
     dotenv::dotenv().ok();
 
-    // let config = Config::from_config_file(
-    //     "../../config.toml",
-    //     "../../masm",
-    //     "../../keystore",
-    //     store_path,
-    // )?;
-
-    // assert!(
-    //     config.liquidity_pools.len() > 1,
-    //     "Less than 2 liquidity pools configured"
-    // );
-
-    let store_path = "../test_store.sqlite3";
     let keystore_path = "./keystore";
     let endpoint = env::var("MIDEN_NODE_ENDPOINT").unwrap_or_else(|_| "".to_string());
     let endpoint = match endpoint.as_str() {
@@ -79,34 +136,43 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
     };
 
     let mut clients = instantiate_simple_client(keystore_path, &endpoint).await?;
-    let mut client = &mut clients.client;
     let keys_directory = PathBuf::from(keystore_path);
     let keystore = FilesystemKeyStore::new(keys_directory.clone())?;
 
-    println!(
-        "--------------------------------keys directory: {}",
-        keys_directory.display()
-    );
+    let state_path = PathBuf::from("test_state.toml");
+    let force_fresh = env::var("CLEAN_TEST").map_or(false, |v| v == "1");
 
-    let faucets = deploy_simple_faucets_from_config(&mut client, &keystore).await?;
+    let (faucets, user) = if force_fresh {
+        println!("CLEAN_TEST=1 — deploying fresh faucets and user.");
+        deploy_fresh(&mut clients, &keystore).await?
+    } else {
+        match load_test_state(&state_path) {
+            Some(cached) => match try_restore_from_cache(&mut clients, &cached).await {
+                Ok(result) => {
+                    println!("Reusing cached faucets and user from previous run.");
+                    result
+                }
+                Err(e) => {
+                    println!("Cache restore failed ({e}), deploying fresh...");
+                    deploy_fresh(&mut clients, &keystore).await?
+                }
+            },
+            None => {
+                println!("No cached test state found, deploying fresh...");
+                deploy_fresh(&mut clients, &keystore).await?
+            }
+        }
+    };
 
-    println!("\nCreating user account...");
-    let (user, _) = create_basic_account(&mut client, keystore.clone()).await?;
-    println!(
-        "Created User Account ⇒ ID: {:?} {:?}",
-        user.id().to_bech32(endpoint.to_network_id()),
-        user.id().to_hex()
-    );
-    client.sync_state().await?;
+    save_test_state(&state_path, &build_cached_state(&faucets, &user))?;
 
-    let (c_prod_pool, _) = deploy_c_prod_pool(client, keystore.clone()).await?;
+    let (c_prod_pool, _) = deploy_c_prod_pool(&mut clients.client, keystore.clone()).await?;
     println!(
-        "Created C Prod Pool Account ⇒ ID: {:?} {:?}",
+        "Created C Prod Pool Account => ID: {:?} {:?}",
         c_prod_pool.id().to_bech32(endpoint.to_network_id()),
         c_prod_pool.id().to_hex()
     );
 
-    // Ok(TestSetup { client, user, pool })
     Ok(TestSetup {
         clients,
         user,

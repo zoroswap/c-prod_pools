@@ -4,6 +4,8 @@ use miden::protocol::active_account
 use miden::core::word
 use miden::core::sys
 
+use miden::core::math::u256
+
 
 const RESERVE_SLOT = word("zoro::c_prod_pool::reserve")
 

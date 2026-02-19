@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::{fs, path::PathBuf, time::Duration};
 use tracing::{debug, info, warn};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::utils::{create_library, fetch_vault_for_account_from_chain, slot_name};
 
@@ -402,6 +402,61 @@ pub fn load_faucets_config() -> Result<FaucetsConfig> {
     let path: PathBuf = [manifest_dir, "faucets.toml"].iter().collect();
     let s = fs::read_to_string(&path).map_err(|e| anyhow!("Error reading {path:?}: {e}"))?;
     toml::from_str(&s).map_err(Into::into)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CachedFaucet {
+    pub account_id_hex: String,
+    pub symbol: String,
+    pub decimals: u8,
+    pub max_supply: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CachedTestState {
+    pub faucets: Vec<CachedFaucet>,
+    pub user_account_id_hex: String,
+}
+
+pub fn save_test_state(path: &PathBuf, state: &CachedTestState) -> Result<()> {
+    let toml_str =
+        toml::to_string_pretty(state).map_err(|e| anyhow!("Failed to serialize state: {e}"))?;
+    fs::write(path, toml_str).map_err(|e| anyhow!("Failed to write {path:?}: {e}"))?;
+    println!("Saved test state to {path:?}");
+    Ok(())
+}
+
+/// Returns `None` if the file is missing or corrupt (logged as warning).
+pub fn load_test_state(path: &PathBuf) -> Option<CachedTestState> {
+    let content = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(_) => return None,
+    };
+    match toml::from_str(&content) {
+        Ok(state) => {
+            println!("Loaded cached test state from {path:?}");
+            Some(state)
+        }
+        Err(e) => {
+            warn!("Corrupt test state at {path:?}: {e}");
+            None
+        }
+    }
+}
+
+/// Imports a public account from the network by its ID.
+/// Returns the full `Account` fetched via RPC.
+pub async fn try_import_account(clients: &mut MidenClients, id: AccountId) -> Result<Account> {
+    clients.client.import_account_by_id(id.clone()).await?;
+    let fetched = clients
+        .rpc_api
+        .get_account_details(id.clone())
+        .await
+        .map_err(|e| anyhow!("Failed to fetch account {id} from node: {e}"))?;
+    match fetched {
+        FetchedAccount::Public(account, _) => Ok(*account),
+        FetchedAccount::Private(_, _) => Err(anyhow!("Account {id} is private")),
+    }
 }
 
 /// Deploys a single simple fungible faucet. Does not read any config files.
