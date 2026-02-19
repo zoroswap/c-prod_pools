@@ -13,7 +13,7 @@ use miden_client::{
     rpc::Endpoint,
     transaction::{OutputNote, TransactionRequestBuilder},
 };
-use std::{collections::HashMap, env, str::FromStr};
+use std::{collections::HashMap, env, path::PathBuf, str::FromStr};
 // use url::Url;
 // use zoro_miden_client::{MidenClient, create_basic_account, wait_for_note};
 // use zoroswap::{
@@ -70,7 +70,7 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
     // );
 
     let store_path = "../test_store.sqlite3";
-    let keystore_path = "../keystore";
+    let keystore_path = "./keystore";
     let endpoint = env::var("MIDEN_NODE_ENDPOINT").unwrap_or_else(|_| "".to_string());
     let endpoint = match endpoint.as_str() {
         "testnet" => Endpoint::testnet(),
@@ -80,7 +80,13 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
 
     let mut clients = instantiate_simple_client(keystore_path, &endpoint).await?;
     let mut client = &mut clients.client;
-    let keystore = FilesystemKeyStore::new(keystore_path.into())?;
+    let keys_directory = PathBuf::from(keystore_path);
+    let keystore = FilesystemKeyStore::new(keys_directory.clone())?;
+
+    println!(
+        "--------------------------------keys directory: {}",
+        keys_directory.display()
+    );
 
     let faucets = deploy_simple_faucets_from_config(&mut client, &keystore).await?;
 
