@@ -42,7 +42,7 @@ pub async fn fetch_vault_for_account_from_chain(
     let fetched = rpc_api
         .get_account_details(account_id.clone())
         .await
-        .map_err(|e| anyhow!("Failed to fetch pool account from node: {e}"))?;
+        .map_err(|e| anyhow!("Failed to fetch account details from node: {e}"))?;
     let account = match fetched {
         FetchedAccount::Public(account, _) => account,
         FetchedAccount::Private(_, _) => {

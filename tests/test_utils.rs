@@ -4,6 +4,7 @@ use c_prod_pool::common::{
     deploy_c_prod_pool, deploy_simple_faucets_from_config, fund_wallet, instantiate_simple_client,
     load_faucets_config, load_test_state, save_test_state, try_import_account,
 };
+use c_prod_pool::utils::fetch_vault_for_account_from_chain;
 use miden_client::{
     Felt, Word,
     account::{Account, AccountId},
@@ -14,6 +15,8 @@ use miden_client::{
     transaction::{OutputNote, TransactionRequestBuilder},
 };
 use std::{env, fs, path::PathBuf};
+
+const DEFAULT_FUND_AMOUNT: u64 = 100_000;
 // use url::Url;
 // use zoro_miden_client::{MidenClient, create_basic_account, wait_for_note};
 // use zoroswap::{
@@ -36,7 +39,8 @@ pub struct TestSetup {
 }
 
 impl TestSetup {
-    /// Funds the user wallet with the given amount from every configured faucet.
+    /// Funds the user wallet with the given amount from every configured faucet,
+    /// regardless of current balance.
     pub async fn fund_user_wallet(&mut self, amount: u64) -> Result<()> {
         self.clients.client.sync_state().await?;
         for asset in self.faucets.iter() {
@@ -46,6 +50,39 @@ impl TestSetup {
                 &asset.config,
                 &asset.faucet.id().clone(),
                 amount,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Funds the user wallet only for faucets where the on-chain balance is below `amount`.
+    /// Skips funding for any faucet that already has sufficient balance.
+    pub async fn maybe_fund_user_wallet(&mut self, amount: u64) -> Result<()> {
+        let vault =
+            fetch_vault_for_account_from_chain(&self.clients.rpc_api, &self.user.id()).await?;
+
+        for asset in self.faucets.iter() {
+            let faucet_id = asset.faucet.id();
+            let current = vault.get_balance(faucet_id).unwrap_or(0);
+            if current >= amount {
+                println!(
+                    "{}: balance {} >= {}, skipping funding",
+                    asset.config.symbol, current, amount
+                );
+                continue;
+            }
+            let needed = amount - current;
+            println!(
+                "{}: balance {} < {}, funding {} more",
+                asset.config.symbol, current, amount, needed
+            );
+            fund_wallet(
+                &mut self.clients,
+                &self.user,
+                &asset.config,
+                &faucet_id,
+                needed,
             )
             .await?;
         }
@@ -150,6 +187,7 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
 
     let force_fresh = env::var("CLEAN_TEST").map_or(false, |v| v == "1");
 
+    let mut is_user_fresh = force_fresh;
     let (faucets, user) = if force_fresh {
         println!("CLEAN_TEST=1 — deploying fresh faucets and user.");
         deploy_fresh(&mut clients, &keystore).await?
@@ -162,11 +200,13 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
                 }
                 Err(e) => {
                     println!("Cache restore failed ({e}), deploying fresh...");
+                    is_user_fresh = true;
                     deploy_fresh(&mut clients, &keystore).await?
                 }
             },
             None => {
                 println!("No cached test state found, deploying fresh...");
+                is_user_fresh = true;
                 deploy_fresh(&mut clients, &keystore).await?
             }
         }
@@ -181,10 +221,16 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
         c_prod_pool.id().to_hex()
     );
 
-    Ok(TestSetup {
+    let mut setup = TestSetup {
         clients,
         user,
         pool: c_prod_pool,
         faucets,
-    })
+    };
+
+    if is_user_fresh {
+        setup.maybe_fund_user_wallet(DEFAULT_FUND_AMOUNT).await?;
+    }
+
+    Ok(setup)
 }

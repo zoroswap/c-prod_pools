@@ -15,7 +15,7 @@ use test_utils::*;
 #[tokio::test]
 async fn smoke_test() -> Result<()> {
     let mut setup = setup_test_environment().await?;
-    setup.fund_user_wallet(100_000).await?;
+    setup.maybe_fund_user_wallet(10_000).await?;
     println!("Setup: {:?}", setup.user.id());
     Ok(())
 }
