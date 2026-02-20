@@ -33,7 +33,9 @@ use tracing::{debug, info, warn};
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{create_library, fetch_vault_for_account_from_chain, slot_name};
+use crate::utils::{
+    create_library, extract_full_account, fetch_vault_for_account_from_chain, slot_name,
+};
 
 //use crate::{Config, order::OrderType};
 //use zoro_miden_client::{MidenClient, create_library};
@@ -101,6 +103,13 @@ pub async fn create_basic_account(
     client.add_account(&account, false).await?;
     keystore.add_key(&key_pair).unwrap();
     client.sync_state().await?;
+
+    // dummy tx to get the new account into node
+    let transaction_request = TransactionRequestBuilder::new().build()?;
+    let _tx_id = client
+        .submit_new_transaction(account.id(), transaction_request)
+        .await?;
+
     Ok((account, key_pair))
 }
 
@@ -449,15 +458,15 @@ pub fn load_test_state(path: &PathBuf) -> Option<CachedTestState> {
 /// Returns the full `Account` fetched via RPC.
 pub async fn try_import_account(clients: &mut MidenClients, id: AccountId) -> Result<Account> {
     clients.client.import_account_by_id(id.clone()).await?;
-    let fetched = clients
-        .rpc_api
-        .get_account_details(id.clone())
-        .await
-        .map_err(|e| anyhow!("Failed to fetch account {id} from node: {e}"))?;
-    match fetched {
-        FetchedAccount::Public(account, _) => Ok(*account),
-        FetchedAccount::Private(_, _) => Err(anyhow!("Account {id} is private")),
-    }
+
+    let record = clients
+        .client
+        .get_account(id)
+        .await?
+        .ok_or(anyhow!("No account found on chain for account_id {}", id))?;
+    let account = extract_full_account(record.account_data())?.clone();
+
+    Ok(account)
 }
 
 /// Deploys a single simple fungible faucet. Does not read any config files.
@@ -496,6 +505,12 @@ pub async fn deploy_simple_faucet(
         .map_err(|e| anyhow!("Failed to add key to keystore: {e:?}"))?;
 
     client.sync_state().await?;
+    // dummy tx to get the new account into node
+    let transaction_request = TransactionRequestBuilder::new().build()?;
+    let _tx_id = client
+        .submit_new_transaction(faucet_account.id(), transaction_request)
+        .await?;
+
     Ok(faucet_account)
 }
 
@@ -527,10 +542,6 @@ pub async fn deploy_simple_faucets_from_config(
         )
         .await?;
 
-        let transaction_request = TransactionRequestBuilder::new().build()?;
-        let _tx_id = client
-            .submit_new_transaction(account.id(), transaction_request)
-            .await?;
         println!(
             "Faucet {} successfully deployed -> ID {:?}",
             faucet.symbol,

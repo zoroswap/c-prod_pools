@@ -179,13 +179,21 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
     let store_path = base_dir.join("store.sqlite3");
     let state_path = base_dir.join("test_state.toml");
 
+    let force_fresh = env::var("CLEAN_TEST").map_or(false, |v| v == "1");
+
+    if force_fresh && store_path.exists() {
+        println!(
+            "CLEAN_TEST=1 — removing old store at {}",
+            store_path.display()
+        );
+        fs::remove_file(&store_path)?;
+    }
+
     let keystore_str = keystore_path.to_str().unwrap();
     let store_str = store_path.to_str().unwrap();
 
     let mut clients = instantiate_simple_client(keystore_str, store_str, &endpoint).await?;
     let keystore = FilesystemKeyStore::new(keystore_path.clone())?;
-
-    let force_fresh = env::var("CLEAN_TEST").map_or(false, |v| v == "1");
 
     let mut is_user_fresh = force_fresh;
     let (faucets, user) = if force_fresh {
@@ -229,6 +237,7 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
     };
 
     if is_user_fresh {
+        println!("Funding user wallet...");
         setup.maybe_fund_user_wallet(DEFAULT_FUND_AMOUNT).await?;
     }
 

@@ -7,10 +7,11 @@ use miden_client::assembly::{
     Assembler, DefaultSourceManager, Module, ModuleKind, Path as AssemblyPath,
 };
 use miden_client::{
-    account::AccountId,
+    account::{Account, AccountId},
     asset::AssetVault,
     note::Note,
     rpc::{GrpcClient, NodeRpcClient, domain::account::FetchedAccount},
+    store::AccountRecordData,
 };
 use tracing::{debug, info};
 
@@ -51,4 +52,11 @@ pub async fn fetch_vault_for_account_from_chain(
     };
 
     Ok(account.vault().clone())
+}
+
+pub fn extract_full_account(data: &AccountRecordData) -> Result<&Account> {
+    match data {
+        AccountRecordData::Full(account) => Ok(account),
+        AccountRecordData::Partial(_) => Err(anyhow!("Expected full account data, got partial")),
+    }
 }
