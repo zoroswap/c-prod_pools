@@ -1,20 +1,329 @@
 use miden::protocol::native_account
 use miden::protocol::active_account
+use miden::protocol::active_note
+use miden::protocol::output_note
+use miden::protocol::asset
 
-use miden::core::word
+#use miden::core::word
 use miden::core::sys
 
 use miden::core::math::u256
-
+use miden::core::math::u64
 
 const RESERVE_SLOT = word("zoro::c_prod_pool::reserve")
+const CONFIG_SLOT = word("zoro::c_prod_pool::config")
+const LP_SHARES_SLOT = word("zoro::c_prod_pool::lp_shares")
 
-#! Inputs:  []
-#! Outputs: [asset0_reserve, asset1_reserve ]
-pub proc get_reserve
-    push.RESERVE_SLOT[0..2] exec.active_account::get_item
-    # => [ asset0_reserve, asset1_reserve ]
+const MINIMUM_LIQUIDITY = 1000
 
+const ERR_INSUFFICIENT_LP_MINTED = "Insufficient LP minted"
+const ERR_SQRT_VERIFY_FAIL = "Sqrt verify fail"
+const ERR_DIV_VERIFY_FAIL = "Div verify fail"
+const ERR_INSUFFICIENT_OUTPUT = "Insufficient output"
+const ERR_INSUFFICIENT_LP_BALANCE = "Insufficient LP balance"
+const ERR_ZERO_AMOUNT = "Zero amount"
+
+
+@locals(4)
+pub proc get_amount_out_naive(reserve_in: u32, reserve_out: u32, amount_in: u32) -> u32
+    # loc.0: reserve_in
+    # loc.1: reserve_out
+    # loc.2: amount_in
+    loc_store.0  loc_store.1 loc_store.2
+    
+    # amount_in_with_fee = amount_in * 997 scaled by 1000
+    loc_load.2 push.997 mul
+    # => [amount_in_with_fee]
+    # loc.3: amount_in_with_fee
+    loc_store.3
+    # => []
+    # numerator = amount_in_with_fee * reserve_out
+    loc_load.3 loc_load.1 mul
+    # => [numerator]
+    # denominator = reserve_in * 1000 + amount_in_with_fee
+    loc_load.3 mul.1000 loc_load.0 add
+    # => [denominator, numerator]
+    #  amount_out = numerator / denominator
+    div
+    # => [amount_out]
     exec.sys::truncate_stack
-    # => [ asset0_reserve, asset1_reserve ]
 end
+
+
+# =============================================================================================
+# INTERNAL HELPERS
+# =============================================================================================
+
+#! Reads the reserve storage slot.
+#! Outputs: [reserve0, reserve1, total_lp, 0]
+proc read_reserves
+    push.RESERVE_SLOT[0..2] exec.active_account::get_item
+end
+
+#! Reads the config storage slot.
+#! Outputs: [t0_prefix, t0_suffix, t1_prefix, t1_suffix]
+proc read_config
+    push.CONFIG_SLOT[0..2] exec.active_account::get_item
+end
+
+#! Writes reserves back to storage.
+#! Inputs: [reserve0, reserve1, total_lp, 0]
+proc write_reserves
+    push.RESERVE_SLOT[0..2] exec.native_account::set_item
+    dropw
+end
+
+#! Integer division via u64: floor(a / b) where a and b are Felts < 2^63.
+#! Inputs:  [b, a]
+#! Outputs: [floor(a / b)]
+#proc felt_div
+#    swap u32split
+#    # => [a_hi, a_lo, b]
+#    movup.2 u32split
+#    # => [b_hi, b_lo, a_hi, a_lo]
+#    exec.u64::div
+#    # => [q_hi, q_lo]
+#    swap push.4294967296 mul add
+#    # => [quotient]
+#end
+
+#! Verifies that r == floor(sqrt(n)).
+#! The hint r is provided by the caller (e.g. via note inputs).
+#! Inputs:  [r, n]
+#! Outputs: [r]
+#proc verified_sqrt
+#    # => [r, n]
+#
+#    # verify r*r <= n  (i.e. n >= r_sq)
+#    dup dup mul
+#    # => [r_sq, r, n]
+#    dup.2
+#    # => [n, r_sq, r, n]
+#    u32gte assert.err=ERR_SQRT_VERIFY_FAIL
+#    # => [r, n]
+#
+#    # verify (r+1)^2 > n, i.e. n < (r+1)^2
+#    swap
+#    # => [n, r]
+#    dup.1 add.1 dup mul
+#    # => [r1_sq, n, r]
+#    swap u32lt assert.err=ERR_SQRT_VERIFY_FAIL
+#    # => [r]
+#end
+
+# =============================================================================================
+# PUBLIC PROCEDURES
+# =============================================================================================
+
+#! Returns the pool reserves and total LP supply.
+#! Inputs:  []
+#! Outputs: [reserve0, reserve1, total_lp, 0]
+#pub proc get_reserve
+#    exec.read_reserves
+#    exec.sys::truncate_stack
+#end
+
+#! Returns the pool token configuration.
+#! Inputs:  []
+#! Outputs: [t0_prefix, t0_suffix, t1_prefix, t1_suffix]
+pub proc get_config
+    exec.read_config
+    exec.sys::truncate_stack
+end
+
+
+#! Processes a swap note: swaps one token for the other using constant product with 0.3% fee.
+#!
+#! The consuming note must contain exactly 1 fungible asset (the input token).
+#! Note inputs[1] = min_amount_out.
+#! Note inputs[2..5] = tag, aux, note_type, execution_hint for output note.
+#! Note inputs[6..9] = RECIPIENT for output note back to user.
+#!
+#! Inputs:  [pad(16)]
+#! Outputs: [pad(16)]
+#@locals(32)
+#pub proc swap
+#    # ---- gather data ----
+#
+#    # loc.0: reserves
+#    exec.read_reserves
+#    loc_storew_be.0 dropw
+#
+#    # loc.1: config
+#    exec.read_config
+#    loc_storew_be.1 dropw
+#
+#    # loc.4+: note inputs
+#    locaddr.4 exec.active_note::get_inputs drop drop
+#
+#    # ---- add input asset to vault ----
+#    exec.active_note::add_assets_to_account
+#
+#    # ---- determine swap direction via balance deltas ----
+#
+#    # balance0 after
+#    padw loc_loadw_be.1 drop drop
+#    exec.active_account::get_balance
+#    # => [balance0]
+#    locaddr.0 mem_load
+#    # => [reserve0, balance0]
+#    swap sub
+#    # => [delta0]  (positive if token0 was deposited)
+#
+#    # balance1 after
+#    padw loc_loadw_be.1 movup.3 movup.3 drop drop
+#    exec.active_account::get_balance
+#    # => [balance1, delta0]
+#    locaddr.0 add.1 mem_load
+#    # => [reserve1, balance1, delta0]
+#    swap sub
+#    # => [delta1, delta0]
+#
+#    # If delta0 > 0: selling token0 for token1
+#    # If delta1 > 0: selling token1 for token0
+#
+#    dup.1 eq.0 not
+#    # => [delta0_positive, delta1, delta0]
+#
+#    if.true
+#        # Selling token0 for token1
+#        # => [delta1, delta0]
+#        drop
+#        # => [amount_in = delta0]
+#        locaddr.0 mem_load
+#        # => [reserve_in = reserve0, amount_in]
+#        locaddr.0 add.1 mem_load
+#        # => [reserve_out = reserve1, reserve_in, amount_in]
+#
+#        push.0 locaddr.8 add.3 mem_store
+#    else
+#        # Selling token1 for token0
+#        # => [delta1, delta0]
+#        swap drop
+#        # => [amount_in = delta1]
+#        locaddr.0 add.1 mem_load
+#        # => [reserve_in = reserve1, amount_in]
+#        locaddr.0 mem_load
+#        # => [reserve_out = reserve0, reserve_in, amount_in]
+#
+#        push.1 locaddr.8 add.3 mem_store
+#    end
+#
+#    # => [reserve_out, reserve_in, amount_in]
+#
+#    # ---- compute amount_out ----
+#    # amount_in_with_fee = amount_in * 997
+#    # numerator = reserve_out * amount_in_with_fee
+#    # denominator = reserve_in * 1000 + amount_in_with_fee
+#
+#    dup.2 push.997 mul
+#    # => [amount_in_with_fee, reserve_out, reserve_in, amount_in]
+#
+#    dup.1 dup.1 mul
+#    # => [numerator, amount_in_with_fee, reserve_out, reserve_in, amount_in]
+#
+#    swap
+#    # => [amount_in_with_fee, numerator, reserve_out, reserve_in, amount_in]
+#    dup.3 push.1000 mul add
+#    # => [denominator, numerator, reserve_out, reserve_in, amount_in]
+#
+#    swap
+#    # => [numerator, denominator, reserve_out, reserve_in, amount_in]
+#
+#    exec.felt_div
+#    # => [amount_out, reserve_out, reserve_in, amount_in]
+#
+#    # save amount_out
+#    dup locaddr.8 mem_store
+#
+#    # ---- slippage check ----
+#    locaddr.4 add.1 mem_load
+#    # => [min_amount_out, amount_out, reserve_out, reserve_in, amount_in]
+#    swap
+#    dup.1 dup.1
+#    u32gte assert.err=ERR_INSUFFICIENT_OUTPUT
+#    drop drop
+#    # => [reserve_out, reserve_in, amount_in]
+#
+#    # ---- update reserves ----
+#    # new_reserve_in = reserve_in + amount_in
+#    swap
+#    # => [reserve_in, reserve_out, amount_in]
+#    dup.2 add
+#    # => [new_reserve_in, reserve_out, amount_in]
+#
+#    # new_reserve_out = reserve_out - amount_out
+#    swap
+#    locaddr.8 mem_load sub
+#    # => [new_reserve_out, new_reserve_in, amount_in]
+#
+#    # Determine which is reserve0/reserve1 based on direction
+#    locaddr.8 add.3 mem_load
+#    # => [direction, new_reserve_out, new_reserve_in, amount_in]
+#
+#    eq.0
+#    if.true
+#        # direction=0: sold token0. new_reserve_in=new_reserve0, new_reserve_out=new_reserve1
+#        swap
+#        # => [new_reserve0=new_reserve_in, new_reserve1=new_reserve_out, amount_in]
+#    else
+#        # direction=1: sold token1. new_reserve_in=new_reserve1, new_reserve_out=new_reserve0
+#        # already: [new_reserve_out=new_reserve0, new_reserve_in=new_reserve1, amount_in]
+#    end
+#
+#    # => [new_reserve0, new_reserve1, amount_in]
+#    drop
+#    locaddr.0 add.2 mem_load
+#    # => [total_lp, new_reserve1, new_reserve0]
+#    push.0
+#    # => [0, total_lp, new_reserve1, new_reserve0]
+#    exec.write_reserves
+#
+#    # ---- build and remove output asset from vault ----
+#    locaddr.8 add.3 mem_load eq.0
+#    if.true
+#        # Sold token0, output is token1
+#        padw loc_loadw_be.1 movup.3 movup.3 drop drop
+#        # => [t1_suffix, t1_prefix]
+#    else
+#        # Sold token1, output is token0
+#        padw loc_loadw_be.1 drop drop
+#        # => [t0_suffix, t0_prefix]
+#    end
+#    # => [faucet_suffix, faucet_prefix]
+#
+#    locaddr.8 mem_load
+#    # => [amount_out, faucet_suffix, faucet_prefix]
+#    movup.2 swap
+#    # => [faucet_prefix, faucet_suffix, amount_out]
+#    exec.asset::build_fungible_asset
+#    # => [ASSET]
+#
+#    exec.native_account::remove_asset
+#    # => [ASSET]
+#
+#    # ---- create output note ----
+#    locaddr.4 add.2 mem_load
+#    locaddr.4 add.3 mem_load
+#    locaddr.5 mem_load
+#    locaddr.5 add.1 mem_load
+#
+#    # RECIPIENT (4 felts at inputs[6..9])
+#    locaddr.5 add.2 mem_load
+#    locaddr.5 add.3 mem_load
+#    locaddr.6 mem_load
+#    locaddr.6 add.1 mem_load
+#    # => [R3, R2, R1, R0, exec_hint, note_type, aux, tag, ASSET]
+#
+#    exec.output_note::create
+#    # => [note_idx, ASSET]
+#
+#    # add the output asset to the note
+#    movdn.4
+#    # => [ASSET, note_idx]
+#    exec.output_note::add_asset
+#    # => []
+#
+#    # clean stack for call return
+#    padw padw padw padw
+#end

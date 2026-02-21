@@ -59,6 +59,7 @@ impl TestSetup {
     /// Funds the user wallet only for faucets where the on-chain balance is below `amount`.
     /// Skips funding for any faucet that already has sufficient balance.
     pub async fn maybe_fund_user_wallet(&mut self, amount: u64) -> Result<()> {
+        self.clients.client.sync_state().await?;
         let vault =
             fetch_vault_for_account_from_chain(&self.clients.rpc_api, &self.user.id()).await?;
 
@@ -222,7 +223,10 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
 
     save_test_state(&state_path, &build_cached_state(&faucets, &user))?;
 
-    let (c_prod_pool, _) = deploy_c_prod_pool(&mut clients.client, keystore.clone()).await?;
+    let token0_id = faucets[0].faucet.id();
+    let token1_id = faucets[1].faucet.id();
+    let (c_prod_pool, _) =
+        deploy_c_prod_pool(&mut clients.client, keystore.clone(), &token0_id, &token1_id).await?;
     println!(
         "Created C Prod Pool Account => ID: {:?} {:?}",
         c_prod_pool.id().to_bech32(endpoint.to_network_id()),

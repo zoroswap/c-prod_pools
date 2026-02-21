@@ -113,15 +113,22 @@ pub async fn create_basic_account(
     Ok((account, key_pair))
 }
 
+/// Deploys a constant-product pool account configured for the given token pair.
+///
+/// Storage slots:
+///   - `reserve`:   [reserve0, reserve1, total_lp, 0]  (initially empty)
+///   - `config`:    [token0_prefix, token0_suffix, token1_prefix, token1_suffix]
+///   - `lp_shares`: StorageMap (initially empty)
 pub async fn deploy_c_prod_pool(
     client: &mut MidenClient,
     keystore: FilesystemKeyStore,
+    token0_id: &AccountId,
+    token1_id: &AccountId,
 ) -> Result<(Account, AuthSecretKey), ClientError> {
     let sync_summary = client.sync_state().await?;
     println!("\nLatest block: {}", sync_summary.block_num);
     println!("\n[STEP 1] Create c_prod_pool account");
 
-    // Load the MASM file for the counter contract
     let manifest_dir: &str = env!("CARGO_MANIFEST_DIR");
 
     let c_prod_pool_code_path: PathBuf = [manifest_dir, "masm", "accounts", "c_prod_pool.masm"]
@@ -130,26 +137,33 @@ pub async fn deploy_c_prod_pool(
     let pool_code = fs::read_to_string(&c_prod_pool_code_path)
         .unwrap_or_else(|err| panic!("unable to read from {c_prod_pool_code_path:?}: {err}"));
 
-    let assembler = TransactionKernel::assembler().with_warnings_as_errors(true);
+    let assembler = TransactionKernel::assembler(); //.with_warnings_as_errors(true);
 
-    // let fees_mapping = StorageSlot::with_map(n("zoroswap::fees"), fees_mapping);
     let reserves = StorageSlot::with_empty_value(slot_name("zoro::c_prod_pool::reserve"));
-    // let user_deposits_mapping = StorageSlot::with_empty_map(n("zoroswap::user_deposits"));
 
-    // Compile the account code into a Library, then create AccountComponent
+    let config_word: Word = [
+        token0_id.prefix().as_felt(),
+        token0_id.suffix(),
+        token1_id.prefix().as_felt(),
+        token1_id.suffix(),
+    ]
+    .into();
+    let config = StorageSlot::with_value(slot_name("zoro::c_prod_pool::config"), config_word);
+
+    let lp_shares = StorageSlot::with_empty_map(slot_name("zoro::c_prod_pool::lp_shares"));
+
     let c_prod_pool_library = create_library(assembler.clone(), "zoro::c_prod_pool", &pool_code)
-        .map_err(|e| anyhow!("Failed to create pool library: {e}"))
+        .map_err(|e| anyhow!("Failed to create pool library: {e:?}"))
         .unwrap();
     let c_prod_pool_component =
-        AccountComponent::new(c_prod_pool_library, vec![reserves])?.with_supports_all_types();
+        AccountComponent::new(c_prod_pool_library, vec![reserves, config, lp_shares])?
+            .with_supports_all_types();
 
-    // Init seed for the pool contract
     let mut init_seed = [0_u8; 32];
     client.rng().fill_bytes(&mut init_seed);
 
     let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
 
-    // Build the new `Account` with the component
     let c_prod_pool_contract = AccountBuilder::new(init_seed)
         .account_type(AccountType::RegularAccountUpdatableCode)
         .storage_mode(AccountStorageMode::Public)
@@ -162,10 +176,11 @@ pub async fn deploy_c_prod_pool(
         "pool contract commitment hash: {:?}",
         c_prod_pool_contract.commitment().to_hex()
     );
-    // println!(
-    //     "contract id: {:?}",
-    //     c_prod_pool_contract.id().to_bech32())
-    // );
+    println!(
+        "pool config: token0={}, token1={}",
+        token0_id.to_hex(),
+        token1_id.to_hex(),
+    );
 
     keystore.add_key(&key_pair).unwrap();
     client
