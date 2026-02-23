@@ -225,8 +225,13 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
 
     let token0_id = faucets[0].faucet.id();
     let token1_id = faucets[1].faucet.id();
-    let (c_prod_pool, _) =
-        deploy_c_prod_pool(&mut clients.client, keystore.clone(), &token0_id, &token1_id).await?;
+    let (c_prod_pool, _) = deploy_c_prod_pool(
+        &mut clients.client,
+        keystore.clone(),
+        &token0_id,
+        &token1_id,
+    )
+    .await?;
     println!(
         "Created C Prod Pool Account => ID: {:?} {:?}",
         c_prod_pool.id().to_bech32(endpoint.to_network_id()),
@@ -246,4 +251,11 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
     }
 
     Ok(setup)
+}
+
+pub fn expected_amount_out(reserve_in: Felt, reserve_out: Felt, amount_in: Felt) -> Felt {
+    let fee_adjusted = amount_in.as_int() as u128 * 997;
+    let numerator = reserve_out.as_int() as u128 * fee_adjusted;
+    let denominator = reserve_in.as_int() as u128 * 1000 + fee_adjusted;
+    Felt::new((numerator / denominator) as u64)
 }

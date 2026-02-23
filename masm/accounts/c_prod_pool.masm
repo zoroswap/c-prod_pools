@@ -22,32 +22,67 @@ const ERR_DIV_VERIFY_FAIL = "Div verify fail"
 const ERR_INSUFFICIENT_OUTPUT = "Insufficient output"
 const ERR_INSUFFICIENT_LP_BALANCE = "Insufficient LP balance"
 const ERR_ZERO_AMOUNT = "Zero amount"
+const ERR_OVERFLOW = "Overflow"
 
 
-@locals(4)
-pub proc get_amount_out_naive(reserve_in: u32, reserve_out: u32, amount_in: u32) -> u32
+@locals(8)
+pub proc get_amount_out_u64(amount_in: felt, reserve_out: felt, reserve_in: felt) -> felt
     # loc.0: reserve_in
     # loc.1: reserve_out
     # loc.2: amount_in
-    loc_store.0  loc_store.1 loc_store.2
+    # loc.3: unused
+    # loc.4: amount_in_with_fee_high
+    # loc.5: amount_in_with_fee_low
+    # loc.6: unused
+    # loc.7: unused
+ 
+    loc_store.0 loc_store.1 loc_store.2
     
-    # amount_in_with_fee = amount_in * 997 scaled by 1000
-    loc_load.2 push.997 mul
-    # => [amount_in_with_fee]
-    # loc.3: amount_in_with_fee
-    loc_store.3
-    # => []
+    # amount_in
+    loc_load.2 u32split 
+    # => [amount_in_high, amount_in_low]
+    push.997 u32split
+    # => [997_high, 997_low, amount_in_high, amount_in_low]
+    # @note: consider overflowing mul
+    exec.u64::wrapping_mul
+    # => [amount_in_with_fee_high, amount_in_with_fee_low]
+    loc_storew_le.4
+    # reserve_out 
+    loc_load.1 u32split 
+    # => [reserve_out_high, reserve_out_low, amount_in_with_fee_high, amount_in_with_fee_low]
     # numerator = amount_in_with_fee * reserve_out
-    loc_load.3 loc_load.1 mul
-    # => [numerator]
-    # denominator = reserve_in * 1000 + amount_in_with_fee
-    loc_load.3 mul.1000 loc_load.0 add
-    # => [denominator, numerator]
-    #  amount_out = numerator / denominator
-    div
+    debug.stack.4
+    exec.u64::wrapping_mul
+    debug.stack.2
+    # => [numerator_high, numerator_low]
+    # reserve_in
+    loc_load.0 u32split push.1000 u32split exec.u64::wrapping_mul
+    # => [reserve_in_scaled_high, reserve_in_scaled_low, numerator_high, numerator_low]
+    # amount_in_with_fee
+    loc_load.5 loc_load.4
+    # => [amount_in_with_fee_high, amount_in_with_fee_low, reserve_in_scaled_high, reserve_in_scaled_low, numerator_high, numerator_low]
+    # denominator = reserve_in_scaled + amount_in_with_fee
+    exec.u64::wrapping_add
+    # => [denominator_high, denominator_low, numerator_high, numerator_low]
+    exec.u64::div
+    # => [amount_out_high, amount_out_low]
+    exec.add_no_overflow
     # => [amount_out]
     exec.sys::truncate_stack
 end
+
+@locals(2)
+proc add_no_overflow(a: u32, b: u32) -> felt
+    # loc.0: b
+    # loc.1: result
+    swap loc_store.0
+    loc_load.0 add loc_store.1
+    loc_load.1 loc_load.0 gte assert.err=ERR_OVERFLOW
+
+    loc_load.1
+end
+
+
 
 
 # =============================================================================================
@@ -68,7 +103,7 @@ end
 
 #! Writes reserves back to storage.
 #! Inputs: [reserve0, reserve1, total_lp, 0]
-proc write_reserves
+pub proc write_reserves
     push.RESERVE_SLOT[0..2] exec.native_account::set_item
     dropw
 end
