@@ -131,7 +131,7 @@ pub async fn deploy_c_prod_pool(
 
     let manifest_dir: &str = env!("CARGO_MANIFEST_DIR");
 
-    let c_prod_pool_code_path: PathBuf = [manifest_dir, "masm", "accounts", "c_prod_pool.masm"]
+    let c_prod_pool_code_path: PathBuf = [manifest_dir, "asm", "accounts", "c_prod_pool.masm"]
         .iter()
         .collect();
     let pool_code = fs::read_to_string(&c_prod_pool_code_path)

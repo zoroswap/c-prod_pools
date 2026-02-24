@@ -1,7 +1,9 @@
 mod test_utils;
 
 use anyhow::Result;
-use c_prod_pool::pool_ops::{compile_custom_tx_script, get_pool_library};
+use c_prod_pool::pool_ops::{
+    compile_custom_tx_script, get_lp_math_library, get_pool_library, isqrt,
+};
 use miden_client::{
     Felt,
     transaction::{AdviceInputs, TransactionRequestBuilder},
@@ -95,5 +97,65 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
     }
 
     println!("All {iterations} fuzz iterations passed.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn sqrt_u32_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let min_n: u32 = 0;
+    let max_n: u32 = u32::MAX;
+    let iterations: usize = 100;
+
+    let mut setup = setup_lightweight_environment().await?;
+    let math_library = get_lp_math_library()?;
+    let mut rng = rand::rng();
+
+    let edge_cases: Vec<u32> = vec![0, 1, 2, 3, 4, 9, 15, 16, 255, 65535, u32::MAX - 1, u32::MAX];
+
+    for (i, n) in edge_cases
+        .into_iter()
+        .chain((0..iterations).map(|_| rng.random_range(min_n..=max_n)))
+        .enumerate()
+    {
+        let source = format!(
+            "use zoro::lp_math\n\
+             begin\n\
+                 push.{n}\n\
+                 exec.lp_math::sqrt_u32\n\
+             end"
+        );
+
+        let script = compile_custom_tx_script(&math_library, &source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.account.id(),
+                script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let got = stack[0].as_int();
+        let expected = isqrt(n as u128) as u64;
+
+        println!("[{}] n={} => got={}, expected={}", i + 1, n, got, expected,);
+
+        assert_eq!(
+            got,
+            expected,
+            "Mismatch at iteration {}: n={}, got={}, expected={}",
+            i + 1,
+            n,
+            got,
+            expected,
+        );
+    }
+
+    println!("All sqrt_u32 fuzz iterations passed.");
     Ok(())
 }

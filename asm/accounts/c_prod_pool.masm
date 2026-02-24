@@ -51,9 +51,7 @@ pub proc get_amount_out_u64(amount_in: felt, reserve_out: felt, reserve_in: felt
     loc_load.1 u32split 
     # => [reserve_out_high, reserve_out_low, amount_in_with_fee_high, amount_in_with_fee_low]
     # numerator = amount_in_with_fee * reserve_out
-    debug.stack.4
     exec.u64::wrapping_mul
-    debug.stack.2
     # => [numerator_high, numerator_low]
     # reserve_in
     loc_load.0 u32split push.1000 u32split exec.u64::wrapping_mul

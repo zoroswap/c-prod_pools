@@ -259,3 +259,41 @@ pub fn expected_amount_out(reserve_in: Felt, reserve_out: Felt, amount_in: Felt)
     let denominator = reserve_in.as_int() as u128 * 1000 + fee_adjusted;
     Felt::new((numerator / denominator) as u64)
 }
+
+/// Minimal test harness: client + one basic account. No faucets, pool, or funding.
+pub struct LightweightTestSetup {
+    pub clients: MidenClients,
+    pub account: Account,
+}
+
+pub async fn setup_lightweight_environment() -> Result<LightweightTestSetup> {
+    dotenv::dotenv().ok();
+
+    let endpoint_label =
+        env::var("MIDEN_NODE_ENDPOINT").unwrap_or_else(|_| "localhost".to_string());
+    let endpoint = match endpoint_label.as_str() {
+        "testnet" => Endpoint::testnet(),
+        "devnet" => Endpoint::devnet(),
+        _ => Endpoint::localhost(),
+    };
+
+    let base_dir = PathBuf::from("tmp").join(&endpoint_label);
+    fs::create_dir_all(&base_dir)?;
+
+    let keystore_path = base_dir.join("keystore");
+    let store_path = base_dir.join("store.sqlite3");
+
+    let keystore_str = keystore_path.to_str().unwrap();
+    let store_str = store_path.to_str().unwrap();
+
+    let mut clients = instantiate_simple_client(keystore_str, store_str, &endpoint).await?;
+    let keystore = FilesystemKeyStore::new(keystore_path.clone())?;
+
+    let (account, _) = create_basic_account(&mut clients.client, keystore).await?;
+    println!(
+        "Lightweight setup: account {:?}",
+        account.id().to_hex()
+    );
+
+    Ok(LightweightTestSetup { clients, account })
+}

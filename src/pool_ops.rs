@@ -19,13 +19,25 @@ use crate::utils::create_library;
 /// Compiles the pool MASM library from source.
 pub fn get_pool_library() -> Result<Library> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path: PathBuf = [manifest_dir, "masm", "accounts", "c_prod_pool.masm"]
+    let path: PathBuf = [manifest_dir, "asm", "accounts", "c_prod_pool.masm"]
         .iter()
         .collect();
     let source = fs::read_to_string(&path)?;
     let assembler = TransactionKernel::assembler().with_warnings_as_errors(true);
     create_library(assembler, "zoro::c_prod_pool", &source)
-        .map_err(|e| anyhow!("Failed to compile pool library: {e}"))
+        .map_err(|e| anyhow!("Failed to compile pool library: {e:?}"))
+}
+
+/// Compiles the LP math MASM library (sqrt, safe_sub, get_lp_amount_out, etc.).
+pub fn get_lp_math_library() -> Result<Library> {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let path: PathBuf = [manifest_dir, "asm", "accounts", "lp_math.masm"]
+        .iter()
+        .collect();
+    let source = fs::read_to_string(&path)?;
+    let assembler = TransactionKernel::assembler().with_warnings_as_errors(true);
+    create_library(assembler, "zoro::lp_math", &source)
+        .map_err(|e| anyhow!("Failed to compile lp_math library: {e:?}"))
 }
 
 /// Compiles a transaction script from arbitrary MASM source, linked against the pool library.
@@ -33,10 +45,10 @@ pub fn compile_custom_tx_script(pool_library: &Library, source: &str) -> Result<
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(pool_library.clone())
-        .map_err(|e| anyhow!("Failed to add pool library to assembler: {e}"))?;
+        .map_err(|e| anyhow!("Failed to add pool library to assembler: {e:?}"))?;
     let program = assembler
         .assemble_program(source)
-        .map_err(|e| anyhow!("Failed to compile tx script: {e}"))?;
+        .map_err(|e| anyhow!("Failed to compile tx script: {e:?}"))?;
     Ok(TransactionScript::new(program))
 }
 
@@ -60,10 +72,10 @@ pub fn compile_pool_note_script(
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(pool_library.clone())
-        .map_err(|e| anyhow!("Failed to add pool library to assembler: {e}"))?;
+        .map_err(|e| anyhow!("Failed to add pool library to assembler: {e:?}"))?;
     let program = assembler
         .assemble_program(source)
-        .map_err(|e| anyhow!("Failed to compile {procedure_name} note script: {e}"))?;
+        .map_err(|e| anyhow!("Failed to compile {procedure_name} note script: {e:?}"))?;
     Ok(NoteScript::new(program))
 }
 

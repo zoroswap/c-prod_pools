@@ -1,0 +1,124 @@
+use miden::core::math::u64
+use miden::core::sys
+
+const ERR_UNDERFLOW = "Underflow"
+const MINIMUM_LIQUIDITY = 1000
+
+
+########## math 
+@locals(4)
+pub proc sqrt_u32(n: u32) -> u32    # floor(sqrt(n)) via bit-by-bit construction.
+    # loc.0: n  loc.1: result loc.2: bit loc.3: tmp
+    loc_store.0  # save n
+    push.0 loc_store.1 # result starts as 0
+    push.0x40000000 loc_store.2 # bit starts as 1<<30
+    push.0 loc_store.3 # tmp starts as 0
+
+    repeat.16
+        loc_load.1 loc_load.2 u32wrapping_add loc_store.3 # tmp = result + bit
+
+        loc_load.0 loc_load.3 u32gte # if n >= tmp
+        if.true
+            loc_load.0 loc_load.3 u32wrapping_sub loc_store.0 # n = n - tmp
+            loc_load.1 u32shr.1 loc_load.2 u32wrapping_add loc_store.1 # result = (result >> 1) + bit
+        else
+            loc_load.1 u32shr.1 loc_store.1 # result = result >> 1
+        end
+
+        loc_load.2 u32shr.2 loc_store.2 # bit = bit >> 2
+    end
+
+    loc_load.1
+    exec.sys::truncate_stack
+end
+
+
+@locals(4)
+pub proc sqrt(n: felt) -> felt
+    # floor(sqrt(n)) via bit-by-bit construction.
+    # For any u32 candidate c, c^2 < field prime p, so felt mul is exact.
+    #
+    # loc.0: n_hi   loc.1: n_lo   loc.2: result   loc.3: bit
+
+    u32split loc_store.0 loc_store.1
+    push.0 loc_store.2
+    push.2147483648 loc_store.3
+
+    push.1
+    while.true
+        loc_load.2 loc_load.3 u32or
+        # => [candidate]
+
+        dup dup mul
+        # => [sq, candidate]
+
+        u32split
+        # => [sq_hi, sq_lo, candidate]
+
+        # compare sq <= n  (u64 le via hi then lo)
+        loc_load.0 dup.1 eq
+        # => [sq_hi==n_hi, sq_hi, sq_lo, candidate]
+
+        if.true
+            drop loc_load.1 u32lte
+            # => [sq_lo<=n_lo, candidate]
+        else
+            loc_load.0 u32lt swap drop
+            # => [sq_hi<n_hi, candidate]
+        end
+
+        if.true
+            loc_store.2
+        else
+            drop
+        end
+
+        loc_load.3 u32shr.1 loc_store.3
+        loc_load.3 neq.0
+    end
+
+    loc_load.2
+end
+
+
+
+@locals(2)
+pub proc safe_sub(b: felt, a: felt) -> felt
+    # loc.0: a
+    # loc.1: res
+    swap loc_store.0
+    loc_load.0 swap
+    sub loc_store.1
+    loc_load.1 loc_load.0 
+    # [a, res]
+    lte assert.err=ERR_UNDERFLOW
+    loc_load.1
+end
+
+
+
+#################
+#@locals(5)
+#pub proc get_lp_amount_out(total_supply: felt, amount_0: felt, amount_1: felt, reserve_0: felt, reserve_1: felt) -> felt
+#    # loc.0: total_supply
+#    # loc.1: amount_0
+#    # loc.2: amount_1
+#    # loc.3: reserve_0
+#    # loc.4: reserve_1
+#    loc_store.0
+#    loc_store.1
+#    loc_store.2
+#    loc_store.3
+#    loc_store.4
+#    # => []
+#    # if total_supply == 0
+#    loc_load.0 eq.0
+#    if.true
+#        loc_load.1 loc_load.2 mul sqrt push.MINIMUM_LIQUIDITY safe_sub
+#    else
+#        loc_load.1 u32split loc_load.0 u32split exec.u64::wrapping_mul loc_load.3 u32split exec.u64::div
+#        # => [lp_amount_variant_0_high, lp_amount_variant_0_low]
+#        loc_load.2 u32split loc_load.0 u32split exec.u64::wrapping_mul loc_load.4 u32split exec.u64::div
+#        # => [lp_amount_variant_1_high, lp_amount_variant_1_low, lp_amount_variant_0_high, lp_amount_variant_0_low]
+#    end
+#end
