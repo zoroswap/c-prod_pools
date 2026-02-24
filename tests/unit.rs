@@ -4,10 +4,7 @@ use anyhow::Result;
 use c_prod_pool::pool_ops::{
     compile_custom_tx_script, get_lp_math_library, get_pool_library, isqrt,
 };
-use miden_client::{
-    Felt,
-    transaction::{AdviceInputs, TransactionRequestBuilder},
-};
+use miden_client::{Felt, transaction::AdviceInputs};
 use std::collections::BTreeSet;
 use test_utils::*;
 
@@ -29,8 +26,7 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
     let max_amount_in: u64 = 100_000;
     let iterations: usize = 50;
 
-    let mut setup = setup_test_environment().await?;
-    setup.maybe_fund_user_wallet(10_000).await?;
+    let mut setup = setup_lightweight_environment().await?;
 
     let pool_library = get_pool_library()?;
     let mut rng = rand::rng();
@@ -56,7 +52,7 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
             .clients
             .client
             .execute_program(
-                setup.pool.id(),
+                setup.account.id(),
                 script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -75,15 +71,6 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
             stack[0].as_int(),
             expected.as_int(),
         );
-        let tx_request = TransactionRequestBuilder::new()
-            .custom_script(script)
-            .build()?;
-
-        let tx_result = setup
-            .clients
-            .client
-            .execute_transaction(setup.pool.id(), tx_request)
-            .await?;
 
         assert_eq!(
             stack[0],
