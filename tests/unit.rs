@@ -4,7 +4,10 @@ use anyhow::Result;
 use c_prod_pool::pool_ops::{
     compile_custom_tx_script, get_lp_math_library, get_pool_library, isqrt,
 };
-use miden_client::{Felt, transaction::AdviceInputs};
+use miden_client::{
+    Felt,
+    transaction::{AdviceInputs, TransactionRequestBuilder},
+};
 use std::collections::BTreeSet;
 use test_utils::*;
 
@@ -81,6 +84,16 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
             reserve_out.as_int(),
             amount_in.as_int(),
         );
+
+        // let tx_request = TransactionRequestBuilder::new()
+        //     .custom_script(script)
+        //     .build()?;
+
+        // let tx_result = setup
+        //     .clients
+        //     .client
+        //     .execute_transaction(setup.account.id(), tx_request)
+        //     .await?;
     }
 
     println!("All {iterations} fuzz iterations passed.");
