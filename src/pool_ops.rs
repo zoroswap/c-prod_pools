@@ -28,16 +28,33 @@ pub fn get_pool_library() -> Result<Library> {
         .map_err(|e| anyhow!("Failed to compile pool library: {e:?}"))
 }
 
-/// Compiles the LP math MASM library (sqrt, safe_sub, get_lp_amount_out, etc.).
-pub fn get_lp_math_library() -> Result<Library> {
+/// Compiles the math MASM library (sqrt, safe_sub, safe_cast_u64_into_felt, etc.).
+pub fn get_math_library() -> Result<Library> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path: PathBuf = [manifest_dir, "asm", "accounts", "lp_math.masm"]
+    let path: PathBuf = [manifest_dir, "asm", "accounts", "math.masm"]
         .iter()
         .collect();
     let source = fs::read_to_string(&path)?;
     let assembler = TransactionKernel::assembler().with_warnings_as_errors(true);
-    create_library(assembler, "zoro::lp_math", &source)
-        .map_err(|e| anyhow!("Failed to compile lp_math library: {e:?}"))
+    create_library(assembler, "zoro::math", &source)
+        .map_err(|e| anyhow!("Failed to compile math library: {e:?}"))
+}
+
+/// Compiles the lp_local MASM library (get_lp_amount_out, deposit, withdraw, etc.).
+/// Depends on the math library.
+pub fn get_lp_local_library() -> Result<Library> {
+    let math_library = get_math_library()?;
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let path: PathBuf = [manifest_dir, "asm", "accounts", "lp_local.masm"]
+        .iter()
+        .collect();
+    let source = fs::read_to_string(&path)?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(math_library)
+        .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?;
+    create_library(assembler, "zoro::lp_local", &source)
+        .map_err(|e| anyhow!("Failed to compile lp_local library: {e:?}"))
 }
 
 /// Compiles a transaction script from arbitrary MASM source, linked against the pool library.
@@ -204,7 +221,7 @@ pub fn compute_expected_lp(
 ) -> u64 {
     if total_lp == 0 {
         let product = amount0 as u128 * amount1 as u128;
-        isqrt(product) as u64 - 1000
+        isqrt(product) as u64 - 100
     } else {
         let lp0 = (amount0 as u128 * total_lp as u128 / reserve0 as u128) as u64;
         let lp1 = (amount1 as u128 * total_lp as u128 / reserve1 as u128) as u64;

@@ -2,7 +2,8 @@ mod test_utils;
 
 use anyhow::Result;
 use c_prod_pool::pool_ops::{
-    compile_custom_tx_script, get_lp_math_library, get_pool_library, isqrt,
+    compile_custom_tx_script, compute_expected_lp, get_lp_local_library, get_math_library,
+    get_pool_library, isqrt,
 };
 use miden_client::{
     Felt,
@@ -109,7 +110,7 @@ async fn sqrt_u32_fuzz_test() -> Result<()> {
     let iterations: usize = 100;
 
     let mut setup = setup_lightweight_environment().await?;
-    let math_library = get_lp_math_library()?;
+    let math_library = get_math_library()?;
     let mut rng = rand::rng();
 
     let edge_cases: Vec<u32> = vec![0, 1, 2, 3, 4, 9, 15, 16, 255, 65535, u32::MAX - 1, u32::MAX];
@@ -120,10 +121,10 @@ async fn sqrt_u32_fuzz_test() -> Result<()> {
         .enumerate()
     {
         let source = format!(
-            "use zoro::lp_math\n\
+            "use zoro::math\n\
              begin\n\
                  push.{n}\n\
-                 exec.lp_math::sqrt_u32\n\
+                 exec.math::sqrt_u32\n\
              end"
         );
 
@@ -169,7 +170,7 @@ async fn sqrt_felt_fuzz_test() -> Result<()> {
     let iterations: usize = 100;
 
     let mut setup = setup_lightweight_environment().await?;
-    let math_library = get_lp_math_library()?;
+    let math_library = get_math_library()?;
     let mut rng = rand::rng();
 
     let edge_cases: Vec<u64> = vec![
@@ -196,11 +197,11 @@ async fn sqrt_felt_fuzz_test() -> Result<()> {
         .enumerate()
     {
         let source = format!(
-            "use zoro::lp_math\n\
+            "use zoro::math\n\
              use miden::core::sys\n\
              begin\n\
                  push.{n}\n\
-                 exec.lp_math::sqrt\n\
+                 exec.math::sqrt\n\
                  exec.sys::truncate_stack\n\
              end"
         );
@@ -245,5 +246,111 @@ async fn sqrt_felt_fuzz_test() -> Result<()> {
     }
 
     println!("All sqrt felt fuzz iterations passed.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_lp_amount_out_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let min_reserve: u64 = 1_000;
+    let max_reserve: u64 = 1_000_000_000_000;
+    let min_amount: u64 = 1;
+    let max_amount: u64 = 100_000_000;
+    let iterations: usize = 100;
+
+    let mut setup = setup_lightweight_environment().await?;
+    let lp_local_library = get_lp_local_library()?;
+    let mut rng = rand::rng();
+
+    let edge_cases: Vec<(u64, u64, u64, u64, u64)> = vec![
+        (0, 100, 100, 0, 0),
+        (0, 1_000_000, 1_000_000, 0, 0),
+        (1000, 100, 100, 1000, 1000),
+        (10000, 500, 500, 50000, 50000),
+    ];
+
+    for (i, (total_supply, amount_0, amount_1, reserve_0, reserve_1)) in edge_cases
+        .into_iter()
+        .chain((0..iterations).map(|_| {
+            let total_supply = if rng.random_range(0..2) == 0 {
+                0
+            } else {
+                rng.random_range(min_reserve..=max_reserve)
+            };
+            let amount_0 = rng.random_range(min_amount..=max_amount);
+            let amount_1 = rng.random_range(min_amount..=max_amount);
+            let reserve_0 = if total_supply == 0 {
+                0
+            } else {
+                rng.random_range(min_reserve..=max_reserve)
+            };
+            let reserve_1 = if total_supply == 0 {
+                0
+            } else {
+                rng.random_range(min_reserve..=max_reserve)
+            };
+            (total_supply, amount_0, amount_1, reserve_0, reserve_1)
+        }))
+        .enumerate()
+    {
+        if total_supply > 0 && (reserve_0 == 0 || reserve_1 == 0) {
+            continue;
+        }
+
+        let source = format!(
+            "use zoro::lp_local\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.{reserve_1}.{reserve_0}.{amount_1}.{amount_0}.{total_supply}\n\
+                 call.lp_local::get_lp_amount_out\n\
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let script = compile_custom_tx_script(&lp_local_library, &source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.account.id(),
+                script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let got = stack[0].as_int();
+        let expected = compute_expected_lp(amount_0, amount_1, reserve_0, reserve_1, total_supply);
+
+        println!(
+            "[{}] ts={} a0={} a1={} r0={} r1={} => got={}, expected={}",
+            i + 1,
+            total_supply,
+            amount_0,
+            amount_1,
+            reserve_0,
+            reserve_1,
+            got,
+            expected,
+        );
+
+        assert_eq!(
+            got,
+            expected,
+            "Mismatch at iteration {}: total_supply={}, amount_0={}, amount_1={}, reserve_0={}, reserve_1={}, got={}, expected={}",
+            i + 1,
+            total_supply,
+            amount_0,
+            amount_1,
+            reserve_0,
+            reserve_1,
+            got,
+            expected,
+        );
+    }
+
+    println!("All get_lp_amount_out fuzz iterations passed.");
     Ok(())
 }
