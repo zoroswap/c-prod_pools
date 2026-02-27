@@ -1,8 +1,9 @@
 use anyhow::{Result, anyhow};
 use c_prod_pool::common::{
     CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
-    deploy_c_prod_pool, deploy_simple_faucets_from_config, fund_wallet, instantiate_simple_client,
-    load_faucets_config, load_test_state, save_test_state, try_import_account,
+    deploy_c_prod_pool, deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, fund_wallet,
+    instantiate_simple_client, load_faucets_config, load_test_state, save_test_state,
+    try_import_account,
 };
 use c_prod_pool::utils::fetch_vault_for_account_from_chain;
 use miden_client::{
@@ -296,4 +297,46 @@ pub async fn setup_lightweight_environment() -> Result<LightweightTestSetup> {
     );
 
     Ok(LightweightTestSetup { clients, account })
+}
+
+/// Minimal test harness for storage_utils fuzz tests: client + dummy account with value and map slots.
+pub struct StorageFuzzTestSetup {
+    pub clients: MidenClients,
+    pub dummy_account: Account,
+}
+
+pub async fn setup_storage_fuzz_environment() -> Result<StorageFuzzTestSetup> {
+    dotenv::dotenv().ok();
+
+    let endpoint_label =
+        env::var("MIDEN_NODE_ENDPOINT").unwrap_or_else(|_| "localhost".to_string());
+    let endpoint = match endpoint_label.as_str() {
+        "testnet" => Endpoint::testnet(),
+        "devnet" => Endpoint::devnet(),
+        _ => Endpoint::localhost(),
+    };
+
+    let base_dir = PathBuf::from("tmp").join(&endpoint_label);
+    fs::create_dir_all(&base_dir)?;
+
+    let keystore_path = base_dir.join("keystore");
+    let store_path = base_dir.join("store.sqlite3");
+
+    let keystore_str = keystore_path.to_str().unwrap();
+    let store_str = store_path.to_str().unwrap();
+
+    let mut clients = instantiate_simple_client(keystore_str, store_str, &endpoint).await?;
+    let keystore = FilesystemKeyStore::new(keystore_path.clone())?;
+
+    let (dummy_account, _) =
+        deploy_storage_fuzz_dummy(&mut clients.client, keystore).await?;
+    println!(
+        "Storage fuzz setup: dummy account {:?}",
+        dummy_account.id().to_hex()
+    );
+
+    Ok(StorageFuzzTestSetup {
+        clients,
+        dummy_account,
+    })
 }

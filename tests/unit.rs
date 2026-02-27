@@ -2,8 +2,8 @@ mod test_utils;
 
 use anyhow::Result;
 use c_prod_pool::pool_ops::{
-    compile_custom_tx_script, compute_expected_lp, get_lp_local_library, get_math_library,
-    get_pool_library, isqrt,
+    compile_custom_tx_script, compile_storage_fuzz_tx_script, compute_expected_lp,
+    get_lp_local_library, get_math_library, get_pool_library, isqrt,
 };
 use miden_client::{
     Felt,
@@ -353,5 +353,284 @@ async fn get_lp_amount_out_fuzz_test() -> Result<()> {
     }
 
     println!("All get_lp_amount_out fuzz iterations passed.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_to_storage_item_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let iterations: usize = 5;
+    let min_inc: u64 = 1;
+    let max_inc: u64 = 1_000_000_000;
+
+    let mut setup = setup_storage_fuzz_environment().await?;
+    let mut rng = rand::rng();
+
+    let edge_cases: Vec<u64> = vec![0, 1];
+    let mut accumulated: u64 = 0;
+
+    for (i, inc) in edge_cases
+        .into_iter()
+        .chain((0..iterations).map(|_| rng.random_range(min_inc..=max_inc)))
+        .enumerate()
+    {
+        let source = format!(
+            "use zoro::storage_fuzz_dummy\n\
+             #use zoro::storage_utils\n\
+             use miden::core::sys\n\
+
+             const VALUE_SLOT = word(\"zoro::storage_fuzz_dummy::value_slot\")\n
+             const MAP_SLOT = word(\"zoro::storage_fuzz_dummy::map_slot\")\n
+             begin\n\
+                 push.{inc}\n\
+                 push.VALUE_SLOT[0..2]\n\
+                 call.storage_fuzz_dummy::add_to_storage_item drop\n 
+                 call.storage_fuzz_dummy::get_value\n
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let script = compile_storage_fuzz_tx_script(&source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.dummy_account.id(),
+                script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let got = stack[0].as_int();
+        accumulated = accumulated.saturating_add(inc);
+        let expected = accumulated;
+
+        println!(
+            "[{}] inc={} => got={}, expected={}",
+            i + 1,
+            inc,
+            got,
+            expected,
+        );
+
+        assert_eq!(
+            got,
+            expected,
+            "Mismatch at iteration {}: inc={}, got={}, expected={}",
+            i + 1,
+            inc,
+            got,
+            expected,
+        );
+    }
+
+    println!("All add_to_storage_item fuzz iterations passed.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn add_to_map_item_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let iterations: usize = 5;
+    let min_inc: u64 = 1;
+    let max_inc: u64 = 1_000_000_000;
+
+    let mut setup = setup_storage_fuzz_environment().await?;
+    let mut rng = rand::rng();
+
+    for i in 0..iterations {
+        let key_0 = rng.random_range(0u64..=u64::MAX);
+        let key_1 = rng.random_range(0u64..=u64::MAX);
+        let key_2 = rng.random_range(0u64..=u64::MAX);
+        let key_3 = rng.random_range(0u64..=u64::MAX);
+        let increment_by = rng.random_range(min_inc..=max_inc);
+
+        let add_source = format!(
+            "use zoro::storage_fuzz_dummy\n\
+             use zoro::storage_utils\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.storage_fuzz_dummy::MAP_SLOT[0..2]\n\
+                 push.{key_3}.{key_2}.{key_1}.{key_0}\n\
+                 push.{increment_by}\n\
+                 swap.7\n\
+                 call.storage_utils::add_to_map_item\n\
+                 dropw\n\
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let add_script = compile_storage_fuzz_tx_script(&add_source)?;
+
+        setup
+            .clients
+            .client
+            .execute_program(
+                setup.dummy_account.id(),
+                add_script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let get_source = format!(
+            "use zoro::storage_fuzz_dummy\n\
+             use miden::protocol::active_account\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.storage_fuzz_dummy::MAP_SLOT[0..2]\n\
+                 push.{key_3}.{key_2}.{key_1}.{key_0}\n\
+                 exec.active_account::get_map_item\n\
+                 drop drop drop\n\
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let get_script = compile_storage_fuzz_tx_script(&get_source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.dummy_account.id(),
+                get_script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let got = stack[0].as_int();
+        let expected = increment_by;
+
+        println!(
+            "[{}] key=({}, {}, {}, {}), inc={} => got={}, expected={}",
+            i + 1,
+            key_0,
+            key_1,
+            key_2,
+            key_3,
+            increment_by,
+            got,
+            expected,
+        );
+
+        assert_eq!(
+            got,
+            expected,
+            "Mismatch at iteration {}: inc={}, got={}, expected={}",
+            i + 1,
+            increment_by,
+            got,
+            expected,
+        );
+    }
+
+    println!("All add_to_map_item fuzz iterations passed.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_map_item_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let iterations: usize = 5;
+    let min_val: u64 = 0;
+    let max_val: u64 = 1_000_000_000;
+
+    let mut setup = setup_storage_fuzz_environment().await?;
+    let mut rng = rand::rng();
+
+    for i in 0..iterations {
+        let key_0 = rng.random_range(0u64..=u64::MAX);
+        let key_1 = rng.random_range(0u64..=u64::MAX);
+        let key_2 = rng.random_range(0u64..=u64::MAX);
+        let key_3 = rng.random_range(0u64..=u64::MAX);
+        let value = rng.random_range(min_val..=max_val);
+
+        let set_source = format!(
+            "use zoro::storage_fuzz_dummy\n\
+             use zoro::storage_utils\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.storage_fuzz_dummy::MAP_SLOT[0..2]\n\
+                 push.{key_3}.{key_2}.{key_1}.{key_0}\n\
+                 push.{value}\n\
+                 swap.7\n\
+                 exec.storage_utils::set_map_item\n\
+                 dropw\n\
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let set_script = compile_storage_fuzz_tx_script(&set_source)?;
+
+        setup
+            .clients
+            .client
+            .execute_program(
+                setup.dummy_account.id(),
+                set_script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let get_source = format!(
+            "use zoro::storage_fuzz_dummy\n\
+             use miden::protocol::active_account\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.storage_fuzz_dummy::MAP_SLOT[0..2]\n\
+                 push.{key_3}.{key_2}.{key_1}.{key_0}\n\
+                 exec.active_account::get_map_item\n\
+                 drop drop drop\n\
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let get_script = compile_storage_fuzz_tx_script(&get_source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.dummy_account.id(),
+                get_script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let got = stack[0].as_int();
+        let expected = value;
+
+        println!(
+            "[{}] key=({}, {}, {}, {}), value={} => got={}, expected={}",
+            i + 1,
+            key_0,
+            key_1,
+            key_2,
+            key_3,
+            value,
+            got,
+            expected,
+        );
+
+        assert_eq!(
+            got,
+            expected,
+            "Mismatch at iteration {}: value={}, got={}, expected={}",
+            i + 1,
+            value,
+            got,
+            expected,
+        );
+    }
+
+    println!("All set_map_item fuzz iterations passed.");
     Ok(())
 }

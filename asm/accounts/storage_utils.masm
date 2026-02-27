@@ -1,0 +1,100 @@
+use miden::protocol::active_account
+use miden::protocol::native_account
+use miden::core::sys
+
+use zoro::math
+
+
+@locals(3)
+pub proc add_to_storage_item(slot_id_prefix: felt, slot_id_suffix: felt, increment_by: felt) -> felt
+    # loc.0: slot_id_prefix
+    # loc.1: slot_id_suffix
+    # loc.2: new_value
+    loc_store.0 loc_store.1
+    # => [increment_by]
+    loc_load.1 loc_load.0 exec.active_account::get_item
+    drop drop drop
+    # => [current_value, increment_by]
+    exec.math::safe_add
+    # => [new_value]
+    loc_store.2
+    ### get current value
+    loc_load.2 push.0.0.0 
+    # => [NEW_VALUE]
+    loc_load.1 loc_load.0 exec.native_account::set_item
+    dropw
+    # => []
+    loc_load.2
+    # => [new_value]
+    exec.sys::truncate_stack
+end
+
+
+
+
+#! Atomically increments a storage map entry: map[KEY] += VALUE.
+#! Reads the current value via get_map_item, adds VALUE, writes back via set_map_item.
+#!
+#! Inputs: [slot_id_prefix, slot_id_suffix, KEY, VALUE]
+#! Outputs: []
+#@locals(9)
+#pub proc add_to_map_item(slot_id_prefix: felt, slot_id_suffix: felt, key: Word, increment_by: felt) -> felt
+#    # loc.0: slot_id_prefix
+#    # loc.1: slot_id_suffix
+#    # loc.4-7: key
+#    # loc.8: new_value
+#    ### save inputs 
+#    loc_store.0 loc_store.1 loc_storew_be.4
+#    # => [KEY,increment_by]
+#    loc_load.1 loc_load.0 exec.active_account::get_map_item
+#    drop drop drop
+#    # => [old_value, increment_by]
+#    exec.math::safe_add
+#    # => [new_value]
+#    loc_store.8
+#
+#    ### set
+#    loc_load.8 loc_loadw_be.4 loc_load.1 loc_load.0 exec.set_map_item
+#    
+#    # => [old_value]
+#end
+#
+#
+#pub proc set_map_item(slot_id_prefix: felt, slot_id_suffix: felt, key: Word, value: felt) -> felt
+#    # loc.0: slot_id_prefix
+#    # loc.1: slot_id_suffix
+#    # loc.4-7: key
+#    loc_store.0 loc_store.1 loc_storew_be.4 dropw
+#    ### fill out value with 0 to full word
+#    push.0.0.0 swap.3 
+#    ### load slot id and key
+#    loc_loadw_be.4 loc_load.1 loc_load.0 
+#    exec.native_account::set_map_item 
+#    ### remove trailing zeros
+#    drop drop drop
+#end
+
+
+#! Adds the provided asset to the active account.
+#!
+#! Inputs:  [ASSET, pad(4, pad(8)]
+#! Outputs: [pad(16)]
+#!
+#! Where:
+#! - ASSET is the asset to be received, can be fungible or non-fungible
+#!
+#! Panics if:
+#! - the same non-fungible asset already exists in the account.
+#! - adding a fungible asset would result in amount overflow, i.e.,
+#!   the total amount would be greater than 2^63.
+#!
+#! Invocation: call
+#pub proc receive_asset
+#    exec.native_account::add_asset
+#    # => [ASSET', reserve, reserve_with_slippage, liabilities, 0, pad(8)]
+#
+#    procref.validate_and_update_state mem_storew_be.DYNAMIC_PROC_ADDR dropw push.DYNAMIC_PROC_ADDR
+#    dynexec
+#
+#    # => [pad(16)]
+#end

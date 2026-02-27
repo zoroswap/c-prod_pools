@@ -1,0 +1,16 @@
+use miden::core::sys
+use miden::protocol::active_account
+pub use zoro::storage_utils::add_to_storage_item
+#pub use zoro::storage_utils::set_map_item
+#pub use zoro::storage_utils::add_to_map_item
+
+
+### STORAGE SLOTS (must match slot_name in deploy_storage_fuzz_dummy)
+const VALUE_SLOT = word("zoro::storage_fuzz_dummy::value_slot")
+const MAP_SLOT = word("zoro::storage_fuzz_dummy::map_slot")
+
+#! No-op proc—minimal code required for valid library.
+pub proc get_value() -> felt
+    push.VALUE_SLOT[0..2] exec.active_account::get_item drop drop drop
+    exec.sys::truncate_stack
+end

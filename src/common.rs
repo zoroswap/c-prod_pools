@@ -33,6 +33,7 @@ use tracing::{debug, info, warn};
 
 use serde::{Deserialize, Serialize};
 
+use crate::pool_ops::{get_math_library, get_storage_utils_library};
 use crate::utils::{
     create_library, extract_full_account, fetch_vault_for_account_from_chain, slot_name,
 };
@@ -190,6 +191,60 @@ pub async fn deploy_c_prod_pool(
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     Ok((c_prod_pool_contract, key_pair))
+}
+
+/// Deploys a dummy account for storage_utils fuzz tests.
+///
+/// Storage slots (must match constants in storage_fuzz_dummy.masm):
+///   - `value_slot`: value slot (initially empty)
+///   - `map_slot`: map slot (initially empty)
+pub async fn deploy_storage_fuzz_dummy(
+    client: &mut MidenClient,
+    keystore: FilesystemKeyStore,
+) -> Result<(Account, AuthSecretKey), ClientError> {
+    let manifest_dir: &str = env!("CARGO_MANIFEST_DIR");
+    let dummy_code_path: PathBuf = [manifest_dir, "asm", "accounts", "storage_fuzz_dummy.masm"]
+        .iter()
+        .collect();
+    let dummy_code = fs::read_to_string(&dummy_code_path)
+        .unwrap_or_else(|err| panic!("unable to read from {dummy_code_path:?}: {err}"));
+
+    let storage_utils_library = get_storage_utils_library()
+        .unwrap_or_else(|e| panic!("Failed to get storage_utils library: {e:?}"));
+    // let math_library =
+    //     get_math_library().unwrap_or_else(|e| panic!("Failed to get math library: {e:?}"));
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(storage_utils_library)
+        .unwrap_or_else(|e| panic!("Failed to add math library: {e:?}"));
+
+    let dummy_library = create_library(assembler.clone(), "zoro::storage_fuzz_dummy", &dummy_code)
+        .unwrap_or_else(|e| panic!("Failed to create storage_fuzz_dummy library: {e:?}"));
+
+    let value_slot =
+        StorageSlot::with_empty_value(slot_name("zoro::storage_fuzz_dummy::value_slot"));
+    let map_slot = StorageSlot::with_empty_map(slot_name("zoro::storage_fuzz_dummy::map_slot"));
+    let dummy_component =
+        AccountComponent::new(dummy_library, vec![value_slot, map_slot])?.with_supports_all_types();
+
+    let mut init_seed = [0_u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+    let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
+
+    let dummy_contract = AccountBuilder::new(init_seed)
+        .account_type(AccountType::RegularAccountUpdatableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(dummy_component)
+        .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
+        .with_component(BasicWallet)
+        .build()?;
+
+    keystore.add_key(&key_pair).unwrap();
+    client.add_account(&dummy_contract.clone(), false).await?;
+    client.sync_state().await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    Ok((dummy_contract, key_pair))
 }
 
 #[derive(Deserialize, Debug)]

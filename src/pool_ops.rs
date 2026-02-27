@@ -57,6 +57,57 @@ pub fn get_lp_local_library() -> Result<Library> {
         .map_err(|e| anyhow!("Failed to compile lp_local library: {e:?}"))
 }
 
+/// Compiles the storage_utils MASM library (add_to_storage_item, add_to_map_item, set_map_item).
+/// Depends on the math library.
+pub fn get_storage_utils_library() -> Result<Library> {
+    let math_library = get_math_library()?;
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let path: PathBuf = [manifest_dir, "asm", "accounts", "storage_utils.masm"]
+        .iter()
+        .collect();
+    let source = fs::read_to_string(&path)?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(math_library)
+        .unwrap_or_else(|e| panic!("Failed to add math library to assembler: {e:?}"));
+    create_library(assembler, "zoro::storage_utils", &source)
+        .map_err(|e| anyhow!("Failed to compile storage_utils library: {e:?}"))
+}
+
+/// Compiles the storage_fuzz_dummy MASM library (minimal dummy with slot constants).
+pub fn get_storage_fuzz_dummy_library() -> Result<Library> {
+    let storage_utils_library = get_storage_utils_library()?;
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let path: PathBuf = [manifest_dir, "asm", "accounts", "storage_fuzz_dummy.masm"]
+        .iter()
+        .collect();
+    let source = fs::read_to_string(&path)?;
+
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(storage_utils_library)
+        .unwrap_or_else(|e| panic!("Failed to add storage_utils library to assembler: {e:?}"));
+    create_library(assembler, "zoro::storage_fuzz_dummy", &source)
+        .map_err(|e| anyhow!("Failed to compile storage_fuzz_dummy library: {e:?}"))
+}
+
+/// Compiles a transaction script for storage fuzz tests.
+/// Links both storage_utils and storage_fuzz_dummy libraries.
+pub fn compile_storage_fuzz_tx_script(source: &str) -> Result<TransactionScript> {
+    let storage_utils_library = get_storage_utils_library()?;
+    let storage_fuzz_dummy_library = get_storage_fuzz_dummy_library()?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(storage_utils_library)
+        .map_err(|e| anyhow!("Failed to add storage_utils library: {e:?}"))?
+        .with_static_library(storage_fuzz_dummy_library)
+        .map_err(|e| anyhow!("Failed to add storage_fuzz_dummy library: {e:?}"))?;
+    let program = assembler
+        .assemble_program(source)
+        .map_err(|e| anyhow!("Failed to compile storage fuzz script: {e:?}"))?;
+    Ok(TransactionScript::new(program))
+}
+
 /// Compiles a transaction script from arbitrary MASM source, linked against the pool library.
 pub fn compile_custom_tx_script(pool_library: &Library, source: &str) -> Result<TransactionScript> {
     let assembler = TransactionKernel::assembler()
@@ -269,5 +320,21 @@ mod tests {
     fn test_swap_output() {
         let out = compute_swap_output(1_000, 50_000, 50_000);
         assert!(out > 970 && out < 1000, "out={out}");
+    }
+
+    #[test]
+    fn test_storage_fuzz_scripts_compile() {
+        let add_source = "use zoro::storage_fuzz_dummy\n\
+             use zoro::storage_utils\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.storage_fuzz_dummy::VALUE_SLOT[0..2]\n\
+                 push.42\n\
+                 swap.2\n\
+                 call.storage_utils::add_to_storage_item\n\
+                 exec.sys::truncate_stack\n\
+             end";
+        let result = compile_storage_fuzz_tx_script(add_source);
+        assert!(result.is_ok(), "compile error: {:?}", result.err());
     }
 }
