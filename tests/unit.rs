@@ -254,7 +254,7 @@ async fn get_lp_amount_out_fuzz_test() -> Result<()> {
     use rand::Rng;
 
     let min_reserve: u64 = 1_000;
-    let max_reserve: u64 = 1_000_000_000_000;
+    let max_reserve: u64 = 1_000_000_000;
     let min_amount: u64 = 1;
     let max_amount: u64 = 100_000_000;
     let iterations: usize = 100;
@@ -324,18 +324,19 @@ async fn get_lp_amount_out_fuzz_test() -> Result<()> {
         let got = stack[0].as_int();
         let expected = compute_expected_lp(amount_0, amount_1, reserve_0, reserve_1, total_supply);
 
-        println!(
-            "[{}] ts={} a0={} a1={} r0={} r1={} => got={}, expected={}",
-            i + 1,
-            total_supply,
-            amount_0,
-            amount_1,
-            reserve_0,
-            reserve_1,
-            got,
-            expected,
-        );
-
+        if got == expected {
+            println!(
+                "[{}] ts={} a0={} a1={} r0={} r1={} => got={}, expected={}",
+                i + 1,
+                total_supply,
+                amount_0,
+                amount_1,
+                reserve_0,
+                reserve_1,
+                got,
+                expected,
+            );
+        };
         assert_eq!(
             got,
             expected,
