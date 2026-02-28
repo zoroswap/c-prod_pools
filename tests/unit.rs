@@ -385,7 +385,7 @@ async fn add_to_storage_item_fuzz_test() -> Result<()> {
              begin\n\
                  push.{inc}\n\
                  push.VALUE_SLOT[0..2]\n\
-                 call.storage_fuzz_dummy::add_to_storage_item drop\n 
+                 call.storage_fuzz_dummy::add_to_storage_item\n 
                  call.storage_fuzz_dummy::get_value\n
                  exec.sys::truncate_stack\n\
              end"
@@ -415,6 +415,18 @@ async fn add_to_storage_item_fuzz_test() -> Result<()> {
             got,
             expected,
         );
+
+        let tx_request = TransactionRequestBuilder::new()
+            .custom_script(script.clone())
+            .build()?;
+
+        let tx_result = setup
+            .clients
+            .client
+            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .await?;
+
+        setup.clients.client.sync_state().await?;
 
         assert_eq!(
             got,
