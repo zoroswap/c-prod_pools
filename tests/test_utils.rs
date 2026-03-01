@@ -291,10 +291,7 @@ pub async fn setup_lightweight_environment() -> Result<LightweightTestSetup> {
     let keystore = FilesystemKeyStore::new(keystore_path.clone())?;
 
     let (account, _) = create_basic_account(&mut clients.client, keystore).await?;
-    println!(
-        "Lightweight setup: account {:?}",
-        account.id().to_hex()
-    );
+    println!("Lightweight setup: account {:?}", account.id().to_hex());
 
     Ok(LightweightTestSetup { clients, account })
 }
@@ -305,7 +302,10 @@ pub struct StorageFuzzTestSetup {
     pub dummy_account: Account,
 }
 
-pub async fn setup_storage_fuzz_environment() -> Result<StorageFuzzTestSetup> {
+pub async fn setup_storage_fuzz_environment(
+    initial_value: u64,
+    initial_map_value: u64,
+) -> Result<StorageFuzzTestSetup> {
     dotenv::dotenv().ok();
 
     let endpoint_label =
@@ -328,8 +328,13 @@ pub async fn setup_storage_fuzz_environment() -> Result<StorageFuzzTestSetup> {
     let mut clients = instantiate_simple_client(keystore_str, store_str, &endpoint).await?;
     let keystore = FilesystemKeyStore::new(keystore_path.clone())?;
 
-    let (dummy_account, _) =
-        deploy_storage_fuzz_dummy(&mut clients.client, keystore).await?;
+    let (dummy_account, _) = deploy_storage_fuzz_dummy(
+        &mut clients.client,
+        keystore,
+        initial_value,
+        initial_map_value,
+    )
+    .await?;
     println!(
         "Storage fuzz setup: dummy account {:?}",
         dummy_account.id().to_hex()

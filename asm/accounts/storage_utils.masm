@@ -38,11 +38,9 @@ pub proc sub_from_storage_item(slot_id_prefix: felt, slot_id_suffix: felt, decre
     # => [sub_by]
     loc_load.1 loc_load.0 exec.active_account::get_item
     drop drop drop
-    debug.stack.2
     # => [current_value, sub_by]
     swap
     exec.math::safe_sub
-    debug.stack.1
     # => [new_value]
     loc_store.2
     ### get current value

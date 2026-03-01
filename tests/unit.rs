@@ -366,7 +366,7 @@ async fn add_to_storage_item_fuzz_test() -> Result<()> {
     let min_inc: u64 = 1;
     let max_inc: u64 = 1_000_000_000;
 
-    let mut setup = setup_storage_fuzz_environment().await?;
+    let mut setup = setup_storage_fuzz_environment(1, 1).await?;
     let mut rng = rand::rng();
 
     let edge_cases: Vec<u64> = vec![0, 1];
@@ -446,6 +446,123 @@ async fn add_to_storage_item_fuzz_test() -> Result<()> {
 }
 
 #[tokio::test]
+async fn add_sub_storage_item_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let iterations: usize = 100;
+    let min_amount: u64 = 1;
+    let max_add: u64 = 1_000_000;
+    let max_sub: u64 = 1_000_000;
+
+    let initial_value = 1_000_000_000;
+    let mut setup = setup_storage_fuzz_environment(initial_value.clone(), 10).await?;
+    let mut rng = rand::rng();
+    let mut accumulated: u64 = initial_value;
+
+    for i in 0..iterations {
+        let op_add = accumulated == 0 || rng.random_range(0..2) == 0;
+
+        let (source, expected, amount, op_name) = if op_add {
+            let amount = rng.random_range(min_amount..=max_add);
+            let new_acc = accumulated.saturating_add(amount);
+            (
+                format!(
+                    "use zoro::storage_fuzz_dummy\n\
+                     use miden::core::sys\n\
+                     const VALUE_SLOT = word(\"zoro::storage_fuzz_dummy::value_slot\")\n\
+                     const MAP_SLOT = word(\"zoro::storage_fuzz_dummy::map_slot\")\n\
+                     begin\n\
+                         push.{amount}\n\
+                         push.VALUE_SLOT[0..2]\n\
+                         call.storage_fuzz_dummy::add_to_storage_item\n\
+                         exec.sys::truncate_stack\n\
+                     end"
+                ),
+                new_acc,
+                amount,
+                "add",
+            )
+        } else {
+            let amount = rng.random_range(min_amount..=accumulated.min(max_sub));
+            let new_acc = accumulated - amount;
+            (
+                format!(
+                    "use zoro::storage_fuzz_dummy\n\
+                     use miden::core::sys\n\
+                     const VALUE_SLOT = word(\"zoro::storage_fuzz_dummy::value_slot\")\n\
+                     const MAP_SLOT = word(\"zoro::storage_fuzz_dummy::map_slot\")\n\
+                     begin\n\
+                         push.{amount}\n\
+                         push.VALUE_SLOT[0..2]\n\
+                         call.storage_fuzz_dummy::sub_from_storage_item\n\
+                         exec.sys::truncate_stack\n\
+                     end"
+                ),
+                new_acc,
+                amount,
+                "sub",
+            )
+        };
+
+        accumulated = expected;
+
+        let script = compile_storage_fuzz_tx_script(&source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.dummy_account.id(),
+                script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let got = stack[0].as_int();
+
+        if (i + 1) % 20 == 0 || i < 3 {
+            println!(
+                "[{}/{}] {} {} => got={}, expected={}",
+                i + 1,
+                iterations,
+                op_name,
+                amount,
+                got,
+                expected,
+            );
+        }
+
+        let tx_request = TransactionRequestBuilder::new()
+            .custom_script(script)
+            .build()?;
+
+        setup
+            .clients
+            .client
+            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .await?;
+
+        setup.clients.client.sync_state().await?;
+
+        assert_eq!(
+            got,
+            expected,
+            "Mismatch at iteration {}: got={}, expected={}",
+            i + 1,
+            got,
+            expected,
+        );
+    }
+
+    println!(
+        "All add_sub_storage_item fuzz iterations ({} add+sub) passed.",
+        iterations
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn add_to_map_item_fuzz_test() -> Result<()> {
     use rand::Rng;
 
@@ -453,7 +570,7 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
     let min_inc: u64 = 1;
     let max_inc: u64 = 1_000_000_000;
 
-    let mut setup = setup_storage_fuzz_environment().await?;
+    let mut setup = setup_storage_fuzz_environment(1, 1).await?;
     let mut rng = rand::rng();
 
     let mut accumulated: u64 = 0;
@@ -560,9 +677,9 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
 
 #[tokio::test]
 async fn sub_from_storage_item_test() -> Result<()> {
-    let mut setup = setup_storage_fuzz_environment().await?;
-
     let initial_value = 100;
+    let mut setup = setup_storage_fuzz_environment(initial_value.clone(), 10).await?;
+
     let sub_by = 30;
     let source = format!(
         "use zoro::storage_fuzz_dummy\n\
@@ -612,9 +729,9 @@ async fn sub_from_storage_item_test() -> Result<()> {
 
 #[tokio::test]
 async fn sub_from_storage_item_underflow_test() -> Result<()> {
-    let mut setup = setup_storage_fuzz_environment().await?;
-
     let initial_value = 100;
+    let mut setup = setup_storage_fuzz_environment(initial_value.clone(), 10).await?;
+
     let sub_by = 3000;
     let source = format!(
         "use zoro::storage_fuzz_dummy\n\

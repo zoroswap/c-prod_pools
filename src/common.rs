@@ -201,6 +201,8 @@ pub async fn deploy_c_prod_pool(
 pub async fn deploy_storage_fuzz_dummy(
     client: &mut MidenClient,
     keystore: FilesystemKeyStore,
+    initial_value: u64,
+    initial_map_value: u64,
 ) -> Result<(Account, AuthSecretKey), ClientError> {
     let manifest_dir: &str = env!("CARGO_MANIFEST_DIR");
     let dummy_code_path: PathBuf = [manifest_dir, "asm", "accounts", "storage_fuzz_dummy.masm"]
@@ -223,11 +225,21 @@ pub async fn deploy_storage_fuzz_dummy(
 
     let value_slot = StorageSlot::with_value(
         slot_name("zoro::storage_fuzz_dummy::value_slot"),
-        Word::new([Felt::new(100), Felt::new(0), Felt::new(0), Felt::new(0)]),
+        Word::new([
+            Felt::new(initial_value),
+            Felt::new(0),
+            Felt::new(0),
+            Felt::new(0),
+        ]),
     );
 
     let key = Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(0)]);
-    let val = Word::new([Felt::new(10), Felt::new(0), Felt::new(0), Felt::new(0)]);
+    let val = Word::new([
+        Felt::new(initial_map_value),
+        Felt::new(0),
+        Felt::new(0),
+        Felt::new(0),
+    ]);
     let mut mapping_instance = StorageMap::new();
     mapping_instance.insert(key, val)?;
     let map_slot = StorageSlot::with_map(
