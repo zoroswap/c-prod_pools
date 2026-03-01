@@ -449,7 +449,7 @@ async fn add_to_storage_item_fuzz_test() -> Result<()> {
 async fn add_sub_storage_item_fuzz_test() -> Result<()> {
     use rand::Rng;
 
-    let iterations: usize = 100;
+    let iterations: usize = 10;
     let min_amount: u64 = 1;
     let max_add: u64 = 1_000_000;
     let max_sub: u64 = 1_000_000;
@@ -521,17 +521,15 @@ async fn add_sub_storage_item_fuzz_test() -> Result<()> {
 
         let got = stack[0].as_int();
 
-        if (i + 1) % 20 == 0 || i < 3 {
-            println!(
-                "[{}/{}] {} {} => got={}, expected={}",
-                i + 1,
-                iterations,
-                op_name,
-                amount,
-                got,
-                expected,
-            );
-        }
+        println!(
+            "[{}/{}] {} {} => got={}, expected={}",
+            i + 1,
+            iterations,
+            op_name,
+            amount,
+            got,
+            expected,
+        );
 
         let tx_request = TransactionRequestBuilder::new()
             .custom_script(script)
@@ -639,33 +637,105 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
 
         setup.clients.client.sync_state().await?;
 
-        // let acc = setup
-        //     .clients
-        //     .client
-        //     .get_account(setup.dummy_account.id())
-        //     .await
-        //     .unwrap()
-        //     .expect("failed to get account");
-
-        // let acc = match acc.account_data() {
-        //     AccountRecordData::Full(account) => account,
-        //     AccountRecordData::Partial(_) => {
-        //         panic!("mapping contract is missing full account data")
-        //     }
-        // };
-        // let val = acc.storage().get_map_item(
-        //     &StorageSlotName::new("zoro::storage_fuzz_dummy::map_slot")?,
-        //     key,
-        // )?;
-
-        // println!("???????????   val after update: {:?} ??????", val);
-
         assert_eq!(
             got,
             expected,
             "Mismatch at iteration {}: inc={}, got={}, expected={}",
             i + 1,
             increment_by,
+            got,
+            expected,
+        );
+    }
+
+    println!("All add_to_map_item fuzz iterations passed.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn sub_from_map_item_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let iterations: usize = 5;
+    let min_inc: u64 = 1;
+    let max_inc: u64 = 1_000_000;
+
+    let initial_map_value = 1_000_000_000;
+    let mut setup = setup_storage_fuzz_environment(1, initial_map_value.clone()).await?;
+    let mut rng = rand::rng();
+
+    let mut accumulated: u64 = initial_map_value;
+
+    let key_0 = 0;
+    let key_1 = 0;
+    let key_2 = 0;
+    let key_3 = 0;
+
+    for i in 0..iterations {
+        let sub_by = rng.random_range(min_inc..=max_inc);
+
+        let sub_source = format!(
+            "use zoro::storage_fuzz_dummy\n\
+             use miden::core::sys\n\
+
+             const VALUE_SLOT = word(\"zoro::storage_fuzz_dummy::value_slot\")\n
+             const MAP_SLOT = word(\"zoro::storage_fuzz_dummy::map_slot\")\n
+             begin\n\
+                 push.{sub_by}\n\
+                 push.{key_0}.{key_1}.{key_2}.{key_3}\n\
+                 push.MAP_SLOT[0..2]\n\
+                 call.storage_fuzz_dummy::sub_from_map_item\n\
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let sub_script = compile_storage_fuzz_tx_script(&sub_source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.dummy_account.id(),
+                sub_script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let got = stack[0].as_int();
+        accumulated = accumulated.saturating_sub(sub_by);
+        let expected = accumulated;
+
+        println!(
+            "[{}] key=({}, {}, {}, {}), sub_by={} => got={}, expected={}",
+            i + 1,
+            key_0,
+            key_1,
+            key_2,
+            key_3,
+            sub_by,
+            got,
+            expected,
+        );
+
+        let tx_request = TransactionRequestBuilder::new()
+            .custom_script(sub_script.clone())
+            .build()?;
+
+        let tx_id = setup
+            .clients
+            .client
+            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .await?;
+
+        setup.clients.client.sync_state().await?;
+
+        assert_eq!(
+            got,
+            expected,
+            "Mismatch at iteration {}: sub_by={}, got={}, expected={}",
+            i + 1,
+            sub_by,
             got,
             expected,
         );

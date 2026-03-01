@@ -4,6 +4,7 @@ pub use zoro::storage_utils::add_to_storage_item
 pub use zoro::storage_utils::sub_from_storage_item
 pub use zoro::storage_utils::set_map_item
 pub use zoro::storage_utils::add_to_map_item
+pub use zoro::storage_utils::sub_from_map_item
 
 
 ### STORAGE SLOTS (must match slot_name in deploy_storage_fuzz_dummy)
