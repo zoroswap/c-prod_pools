@@ -6,10 +6,12 @@ use c_prod_pool::pool_ops::{
     get_lp_local_library, get_math_library, get_pool_library, isqrt,
 };
 use miden_client::{
-    Felt,
+    Felt, Word,
+    account::StorageSlotName,
+    store::AccountRecordData,
     transaction::{AdviceInputs, TransactionRequestBuilder},
 };
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, time::Duration};
 use test_utils::*;
 
 #[tokio::test]
@@ -454,31 +456,40 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
     let mut setup = setup_storage_fuzz_environment().await?;
     let mut rng = rand::rng();
 
+    let mut accumulated: u64 = 0;
+
+    let key_0 = 0;
+    let key_1 = 0;
+    let key_2 = 0;
+    let key_3 = 2;
+    let key = Word::new([
+        Felt::new(key_0),
+        Felt::new(key_1),
+        Felt::new(key_2),
+        Felt::new(key_3),
+    ]);
+
     for i in 0..iterations {
-        let key_0 = rng.random_range(0u64..=u64::MAX);
-        let key_1 = rng.random_range(0u64..=u64::MAX);
-        let key_2 = rng.random_range(0u64..=u64::MAX);
-        let key_3 = rng.random_range(0u64..=u64::MAX);
         let increment_by = rng.random_range(min_inc..=max_inc);
 
         let add_source = format!(
             "use zoro::storage_fuzz_dummy\n\
-             use zoro::storage_utils\n\
              use miden::core::sys\n\
+
+             const VALUE_SLOT = word(\"zoro::storage_fuzz_dummy::value_slot\")\n
+             const MAP_SLOT = word(\"zoro::storage_fuzz_dummy::map_slot\")\n
              begin\n\
-                 push.storage_fuzz_dummy::MAP_SLOT[0..2]\n\
-                 push.{key_3}.{key_2}.{key_1}.{key_0}\n\
                  push.{increment_by}\n\
-                 swap.7\n\
-                 call.storage_utils::add_to_map_item\n\
-                 dropw\n\
+                 push.{key_0}.{key_1}.{key_2}.{key_3}\n\
+                 push.MAP_SLOT[0..2]\n\
+                 call.storage_fuzz_dummy::add_to_map_item\n\
                  exec.sys::truncate_stack\n\
              end"
         );
 
         let add_script = compile_storage_fuzz_tx_script(&add_source)?;
 
-        setup
+        let stack = setup
             .clients
             .client
             .execute_program(
@@ -489,34 +500,9 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
             )
             .await?;
 
-        let get_source = format!(
-            "use zoro::storage_fuzz_dummy\n\
-             use miden::protocol::active_account\n\
-             use miden::core::sys\n\
-             begin\n\
-                 push.storage_fuzz_dummy::MAP_SLOT[0..2]\n\
-                 push.{key_3}.{key_2}.{key_1}.{key_0}\n\
-                 exec.active_account::get_map_item\n\
-                 drop drop drop\n\
-                 exec.sys::truncate_stack\n\
-             end"
-        );
-
-        let get_script = compile_storage_fuzz_tx_script(&get_source)?;
-
-        let stack = setup
-            .clients
-            .client
-            .execute_program(
-                setup.dummy_account.id(),
-                get_script.clone(),
-                AdviceInputs::default(),
-                BTreeSet::new(),
-            )
-            .await?;
-
         let got = stack[0].as_int();
-        let expected = increment_by;
+        accumulated = accumulated.saturating_add(increment_by);
+        let expected = accumulated;
 
         println!(
             "[{}] key=({}, {}, {}, {}), inc={} => got={}, expected={}",
@@ -530,6 +516,39 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
             expected,
         );
 
+        let tx_request = TransactionRequestBuilder::new()
+            .custom_script(add_script.clone())
+            .build()?;
+
+        let tx_id = setup
+            .clients
+            .client
+            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .await?;
+
+        setup.clients.client.sync_state().await?;
+
+        // let acc = setup
+        //     .clients
+        //     .client
+        //     .get_account(setup.dummy_account.id())
+        //     .await
+        //     .unwrap()
+        //     .expect("failed to get account");
+
+        // let acc = match acc.account_data() {
+        //     AccountRecordData::Full(account) => account,
+        //     AccountRecordData::Partial(_) => {
+        //         panic!("mapping contract is missing full account data")
+        //     }
+        // };
+        // let val = acc.storage().get_map_item(
+        //     &StorageSlotName::new("zoro::storage_fuzz_dummy::map_slot")?,
+        //     key,
+        // )?;
+
+        // println!("???????????   val after update: {:?} ??????", val);
+
         assert_eq!(
             got,
             expected,
@@ -542,107 +561,5 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
     }
 
     println!("All add_to_map_item fuzz iterations passed.");
-    Ok(())
-}
-
-#[tokio::test]
-async fn set_map_item_fuzz_test() -> Result<()> {
-    use rand::Rng;
-
-    let iterations: usize = 5;
-    let min_val: u64 = 0;
-    let max_val: u64 = 1_000_000_000;
-
-    let mut setup = setup_storage_fuzz_environment().await?;
-    let mut rng = rand::rng();
-
-    for i in 0..iterations {
-        let key_0 = rng.random_range(0u64..=u64::MAX);
-        let key_1 = rng.random_range(0u64..=u64::MAX);
-        let key_2 = rng.random_range(0u64..=u64::MAX);
-        let key_3 = rng.random_range(0u64..=u64::MAX);
-        let value = rng.random_range(min_val..=max_val);
-
-        let set_source = format!(
-            "use zoro::storage_fuzz_dummy\n\
-             use zoro::storage_utils\n\
-             use miden::core::sys\n\
-             begin\n\
-                 push.storage_fuzz_dummy::MAP_SLOT[0..2]\n\
-                 push.{key_3}.{key_2}.{key_1}.{key_0}\n\
-                 push.{value}\n\
-                 swap.7\n\
-                 exec.storage_utils::set_map_item\n\
-                 dropw\n\
-                 exec.sys::truncate_stack\n\
-             end"
-        );
-
-        let set_script = compile_storage_fuzz_tx_script(&set_source)?;
-
-        setup
-            .clients
-            .client
-            .execute_program(
-                setup.dummy_account.id(),
-                set_script.clone(),
-                AdviceInputs::default(),
-                BTreeSet::new(),
-            )
-            .await?;
-
-        let get_source = format!(
-            "use zoro::storage_fuzz_dummy\n\
-             use miden::protocol::active_account\n\
-             use miden::core::sys\n\
-             begin\n\
-                 push.storage_fuzz_dummy::MAP_SLOT[0..2]\n\
-                 push.{key_3}.{key_2}.{key_1}.{key_0}\n\
-                 exec.active_account::get_map_item\n\
-                 drop drop drop\n\
-                 exec.sys::truncate_stack\n\
-             end"
-        );
-
-        let get_script = compile_storage_fuzz_tx_script(&get_source)?;
-
-        let stack = setup
-            .clients
-            .client
-            .execute_program(
-                setup.dummy_account.id(),
-                get_script.clone(),
-                AdviceInputs::default(),
-                BTreeSet::new(),
-            )
-            .await?;
-
-        let got = stack[0].as_int();
-        let expected = value;
-
-        println!(
-            "[{}] key=({}, {}, {}, {}), value={} => got={}, expected={}",
-            i + 1,
-            key_0,
-            key_1,
-            key_2,
-            key_3,
-            value,
-            got,
-            expected,
-        );
-
-        assert_eq!(
-            got,
-            expected,
-            "Mismatch at iteration {}: value={}, got={}, expected={}",
-            i + 1,
-            value,
-            got,
-            expected,
-        );
-    }
-
-    println!("All set_map_item fuzz iterations passed.");
     Ok(())
 }

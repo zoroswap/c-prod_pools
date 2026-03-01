@@ -223,7 +223,15 @@ pub async fn deploy_storage_fuzz_dummy(
 
     let value_slot =
         StorageSlot::with_empty_value(slot_name("zoro::storage_fuzz_dummy::value_slot"));
-    let map_slot = StorageSlot::with_empty_map(slot_name("zoro::storage_fuzz_dummy::map_slot"));
+    let key = Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(0)]);
+    let val = Word::new([Felt::new(10), Felt::new(0), Felt::new(0), Felt::new(0)]);
+    let mut mapping_instance = StorageMap::new();
+    mapping_instance.insert(key, val)?;
+    let map_slot = StorageSlot::with_map(
+        slot_name("zoro::storage_fuzz_dummy::map_slot"),
+        mapping_instance,
+    );
+    // let map_slot = StorageSlot::with_empty_map(slot_name("zoro::storage_fuzz_dummy::map_slot"));
     let dummy_component =
         AccountComponent::new(dummy_library, vec![value_slot, map_slot])?.with_supports_all_types();
 
