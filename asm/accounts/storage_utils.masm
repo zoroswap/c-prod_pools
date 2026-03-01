@@ -13,10 +13,36 @@ pub proc add_to_storage_item(slot_id_prefix: felt, slot_id_suffix: felt, increme
     loc_store.0 loc_store.1
     # => [increment_by]
     loc_load.1 loc_load.0 exec.active_account::get_item
-    push.1 drop
     drop drop drop
     # => [current_value, increment_by]
     exec.math::safe_add
+    # => [new_value]
+    loc_store.2
+    ### get current value
+    loc_load.2 push.0.0.0 
+    # => [NEW_VALUE]
+    loc_load.1 loc_load.0 exec.native_account::set_item
+    dropw
+    # => []
+    loc_load.2
+    # => [new_value]
+    exec.sys::truncate_stack
+end
+
+@locals(3)
+pub proc sub_from_storage_item(slot_id_prefix: felt, slot_id_suffix: felt, decrement_by: felt) -> felt
+    # loc.0: slot_id_prefix
+    # loc.1: slot_id_suffix
+    # loc.2: new_value
+    loc_store.0 loc_store.1
+    # => [sub_by]
+    loc_load.1 loc_load.0 exec.active_account::get_item
+    drop drop drop
+    debug.stack.2
+    # => [current_value, sub_by]
+    swap
+    exec.math::safe_sub
+    debug.stack.1
     # => [new_value]
     loc_store.2
     ### get current value

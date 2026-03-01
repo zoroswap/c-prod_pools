@@ -460,14 +460,8 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
 
     let key_0 = 0;
     let key_1 = 0;
-    let key_2 = 0;
-    let key_3 = 2;
-    let key = Word::new([
-        Felt::new(key_0),
-        Felt::new(key_1),
-        Felt::new(key_2),
-        Felt::new(key_3),
-    ]);
+    let key_2 = rng.random_range(0..=u32::MAX as u64);
+    let key_3 = rng.random_range(0..=u32::MAX as u64);
 
     for i in 0..iterations {
         let increment_by = rng.random_range(min_inc..=max_inc);
@@ -561,5 +555,103 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
     }
 
     println!("All add_to_map_item fuzz iterations passed.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn sub_from_storage_item_test() -> Result<()> {
+    let mut setup = setup_storage_fuzz_environment().await?;
+
+    let initial_value = 100;
+    let sub_by = 30;
+    let source = format!(
+        "use zoro::storage_fuzz_dummy\n\
+         use miden::core::sys\n\
+
+         const VALUE_SLOT = word(\"zoro::storage_fuzz_dummy::value_slot\")\n
+         const MAP_SLOT = word(\"zoro::storage_fuzz_dummy::map_slot\")\n
+         begin\n\
+             push.{sub_by}\n\
+             push.VALUE_SLOT[0..2]\n\
+             call.storage_fuzz_dummy::sub_from_storage_item\n\
+             call.storage_fuzz_dummy::get_value\n\
+             exec.sys::truncate_stack\n\
+         end"
+    );
+
+    let sub_script = compile_storage_fuzz_tx_script(&source)?;
+
+    let stack = setup
+        .clients
+        .client
+        .execute_program(
+            setup.dummy_account.id(),
+            sub_script.clone(),
+            AdviceInputs::default(),
+            BTreeSet::new(),
+        )
+        .await?;
+
+    let got = stack[0].as_int();
+
+    let expected = initial_value - sub_by; // 100 - 30
+
+    println!(
+        "sub_from_storage_item: add 100, sub 30 => got={}, expected={}",
+        got, expected
+    );
+
+    assert_eq!(
+        got, expected,
+        "sub_from_storage_item mismatch: got={}, expected={}",
+        got, expected,
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn sub_from_storage_item_underflow_test() -> Result<()> {
+    let mut setup = setup_storage_fuzz_environment().await?;
+
+    let initial_value = 100;
+    let sub_by = 3000;
+    let source = format!(
+        "use zoro::storage_fuzz_dummy\n\
+         use miden::core::sys\n\
+
+         const VALUE_SLOT = word(\"zoro::storage_fuzz_dummy::value_slot\")\n
+         const MAP_SLOT = word(\"zoro::storage_fuzz_dummy::map_slot\")\n
+         begin\n\
+             push.{sub_by}\n\
+             push.VALUE_SLOT[0..2]\n\
+             call.storage_fuzz_dummy::sub_from_storage_item\n\
+             exec.sys::truncate_stack\n\
+         end"
+    );
+
+    let sub_fail_script = compile_storage_fuzz_tx_script(&source)?;
+
+    let result = setup
+        .clients
+        .client
+        .execute_program(
+            setup.dummy_account.id(),
+            sub_fail_script,
+            AdviceInputs::default(),
+            BTreeSet::new(),
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "sub_from_storage_item should fail with underflow when subtracting 3000 from 100, got Ok"
+    );
+
+    println!(
+        "sub_from_storage_item underflow: 50 - 100 correctly failed with: {:?}",
+        result.unwrap_err()
+    );
+
     Ok(())
 }

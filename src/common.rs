@@ -221,8 +221,11 @@ pub async fn deploy_storage_fuzz_dummy(
     let dummy_library = create_library(assembler.clone(), "zoro::storage_fuzz_dummy", &dummy_code)
         .unwrap_or_else(|e| panic!("Failed to create storage_fuzz_dummy library: {e:?}"));
 
-    let value_slot =
-        StorageSlot::with_empty_value(slot_name("zoro::storage_fuzz_dummy::value_slot"));
+    let value_slot = StorageSlot::with_value(
+        slot_name("zoro::storage_fuzz_dummy::value_slot"),
+        Word::new([Felt::new(100), Felt::new(0), Felt::new(0), Felt::new(0)]),
+    );
+
     let key = Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(0)]);
     let val = Word::new([Felt::new(10), Felt::new(0), Felt::new(0), Felt::new(0)]);
     let mut mapping_instance = StorageMap::new();
