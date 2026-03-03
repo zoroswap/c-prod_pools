@@ -49,8 +49,6 @@ pub proc sqrt(n: felt) -> felt
     push.0x4000000000000000  u32split loc_store.4 loc_store.5  # bit starts as 1<<62
     push.0.0 loc_store.6 loc_store.7 # tmp starts as 0
 
-    debug.local
-
     repeat.32
         ###  tmp = result + bit
         loc_load.3 loc_load.2
@@ -64,7 +62,6 @@ pub proc sqrt(n: felt) -> felt
         # => [n_hi, n_lo]
         loc_load.7 loc_load.6
         # => [tmp_hi, tmp_lo, n_hi, n_lo]
-        debug.local
         exec.u64::gte
         if.true
             ### n = n - (result + bit)  

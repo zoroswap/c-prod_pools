@@ -2,17 +2,21 @@ mod test_utils;
 
 use anyhow::Result;
 use c_prod_pool::pool_ops::{
-    compile_custom_tx_script, compile_storage_fuzz_tx_script, compute_expected_lp,
-    get_lp_local_library, get_math_library, get_pool_library, isqrt,
+    build_lp_local_deposit_note, compile_custom_tx_script, compile_storage_fuzz_tx_script,
+    compute_expected_lp, get_lp_local_library, get_math_library, get_pool_library, isqrt,
 };
+use c_prod_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
 use miden_client::{
     Felt, Word,
     account::StorageSlotName,
-    store::AccountRecordData,
-    transaction::{AdviceInputs, TransactionRequestBuilder},
+    asset::FungibleAsset,
+    store::{AccountRecord, AccountRecordData},
+    transaction::{AdviceInputs, OutputNote, TransactionRequestBuilder},
 };
 use std::{collections::BTreeSet, time::Duration};
 use test_utils::*;
+
+use miden_client::rpc::NodeRpcClient;
 
 #[tokio::test]
 async fn smoke_test() -> Result<()> {
@@ -840,5 +844,184 @@ async fn sub_from_storage_item_underflow_test() -> Result<()> {
         result.unwrap_err()
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn deposit_happy_path_test() -> Result<()> {
+    use miden_client::note::NoteTag;
+
+    let mut setup = setup_lp_local_test_environment().await?;
+    // setup.maybe_fund_user_wallet(100_000_000_000).await?;
+
+    let lp_lib = get_lp_local_library()?;
+    let token0_id = setup.faucets[0].faucet.id();
+    let token1_id = setup.faucets[1].faucet.id();
+    let amount0 = 1000_000u64;
+    let amount1 = 1000_000u64;
+    let token0_asset = FungibleAsset::new(token0_id.clone(), amount0)?;
+    let token1_asset = FungibleAsset::new(token1_id.clone(), amount1)?;
+
+    let deposit_note = build_lp_local_deposit_note(
+        setup.lp_local_pool.id(),
+        &lp_lib,
+        token0_asset,
+        token1_asset,
+        setup.user.id(),
+        setup.user.id(),
+    )?;
+
+    let pool_tag = NoteTag::with_account_target(setup.lp_local_pool.id());
+    setup.clients.client.add_note_tag(pool_tag).await?;
+
+    let create_req = TransactionRequestBuilder::new()
+        .own_output_notes([OutputNote::Full(deposit_note.clone())])
+        .build()?;
+    let _tx_id = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.user.id(), create_req)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    // wait_for_note(&mut setup.clients.client, &deposit_note).await?;
+    let consume_req = TransactionRequestBuilder::new()
+        // .input_notes([(deposit_note.clone(), None), (deposit_note_2.clone(), None)])
+        .input_notes([(deposit_note.clone(), None)])
+        .build()?;
+
+    let _consume_id = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.lp_local_pool.id(), consume_req)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    let deposit_note_2 = build_lp_local_deposit_note(
+        setup.lp_local_pool.id(),
+        &lp_lib,
+        token0_asset,
+        token1_asset,
+        setup.user.id(),
+        setup.user.id(),
+    )?;
+
+    let create_req_2 = TransactionRequestBuilder::new()
+        .own_output_notes([OutputNote::Full(deposit_note_2.clone())])
+        .build()?;
+    let _tx_id = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.user.id(), create_req_2)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    // wait_for_note(&mut setup.clients.client, &deposit_note).await?;
+    let consume_req_2 = TransactionRequestBuilder::new()
+        // .input_notes([(deposit_note.clone(), None), (deposit_note_2.clone(), None)])
+        .input_notes([(deposit_note_2.clone(), None)])
+        .build()?;
+
+    let _consume_id_2 = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.lp_local_pool.id(), consume_req_2)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    // read the storage items: total supply, reserve0, reserve1, user_deposits_mapping value for the user
+    let acc_after = setup
+        .clients
+        .client
+        .get_account(setup.lp_local_pool.id().clone())
+        .await?
+        .unwrap();
+    let acc_after = match acc_after.account_data() {
+        AccountRecordData::Full(account) => account,
+        AccountRecordData::Partial(_) => return Err(anyhow::anyhow!("Account not found")),
+    };
+
+    let acc_after_storage = acc_after.storage();
+    let total_supply = acc_after_storage.get_item(&slot_name("zoro::lp_local::total_supply"))?;
+    let reserve = acc_after_storage.get_item(&slot_name("zoro::lp_local::reserve"))?;
+    let user_key = Word::new([
+        Felt::new(0),
+        Felt::new(0),
+        setup.user.id().suffix(),
+        setup.user.id().prefix().into(),
+    ]);
+    let user_deposit_balance = acc_after_storage.get_map_item(
+        &slot_name("zoro::lp_local::user_deposits_mapping"),
+        user_key,
+    )?;
+
+    println!(
+        "total_supply={}\nreserve0={}\nreserve1={}\nuser_deposit_balance={}\n",
+        total_supply[0].as_int(),
+        reserve[0].as_int(),
+        reserve[1].as_int(),
+        user_deposit_balance[0].as_int(),
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn deposit_initial_underflow_test() -> Result<()> {
+    use c_prod_pool::common::wait_for_note;
+    use miden_client::note::NoteTag;
+
+    let mut setup = setup_lp_local_test_environment().await?;
+    setup.maybe_fund_user_wallet(1_000).await?;
+
+    let lp_lib = get_lp_local_library()?;
+    let token0_id = setup.faucets[0].faucet.id();
+    let token1_id = setup.faucets[1].faucet.id();
+    let amount0 = 10u64;
+    let amount1 = 10u64;
+    let token0_asset = FungibleAsset::new(token0_id.clone(), amount0)?;
+    let token1_asset = FungibleAsset::new(token1_id.clone(), amount1)?;
+
+    let deposit_note = build_lp_local_deposit_note(
+        setup.lp_local_pool.id(),
+        &lp_lib,
+        token0_asset,
+        token1_asset,
+        setup.user.id(),
+        setup.user.id(),
+    )?;
+
+    let pool_tag = NoteTag::with_account_target(setup.lp_local_pool.id());
+    setup.clients.client.add_note_tag(pool_tag).await?;
+
+    let create_req = TransactionRequestBuilder::new()
+        .own_output_notes([OutputNote::Full(deposit_note.clone())])
+        .build()?;
+    let _tx_id = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.user.id(), create_req)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    wait_for_note(&mut setup.clients.client, &deposit_note).await?;
+
+    let consume_req = TransactionRequestBuilder::new()
+        .input_notes([(deposit_note, None)])
+        .build()?;
+    let result = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.lp_local_pool.id(), consume_req)
+        .await;
+
+    assert!(
+        result.is_err(),
+        "deposit with amount0=10 amount1=10 should fail (sqrt(100)-100 underflows)"
+    );
+    println!(
+        "deposit_initial_underflow_test: correctly failed with {:?}",
+        result.unwrap_err()
+    );
     Ok(())
 }

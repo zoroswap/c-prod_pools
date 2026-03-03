@@ -1,9 +1,9 @@
 use anyhow::{Result, anyhow};
 use c_prod_pool::common::{
     CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
-    deploy_c_prod_pool, deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, fund_wallet,
-    instantiate_simple_client, load_faucets_config, load_test_state, save_test_state,
-    try_import_account,
+    deploy_c_prod_pool, deploy_lp_local_pool, deploy_simple_faucets_from_config,
+    deploy_storage_fuzz_dummy, fund_wallet, instantiate_simple_client, load_faucets_config,
+    load_test_state, save_test_state, try_import_account,
 };
 use c_prod_pool::utils::fetch_vault_for_account_from_chain;
 use miden_client::{
@@ -162,7 +162,7 @@ fn build_cached_state(faucets: &[Faucet], user: &Account) -> CachedTestState {
 
 /// Load config, create a Miden client, sync state, and create a fresh basic account.
 /// Reuses previously deployed faucets and user when a `test_state.toml` cache exists.
-/// Set `FRESH_SETUP=1` to force a clean deployment.
+/// Set `CLEAN_TEST=1` to force a clean deployment.
 pub async fn setup_test_environment() -> Result<TestSetup> {
     dotenv::dotenv().ok();
 
@@ -344,4 +344,131 @@ pub async fn setup_storage_fuzz_environment(
         clients,
         dummy_account,
     })
+}
+
+/// Test setup for lp_local deposit tests: clients, user, lp_local pool, faucets.
+pub struct LpLocalTestSetup {
+    pub clients: MidenClients,
+    pub user: Account,
+    pub lp_local_pool: Account,
+    pub faucets: Vec<Faucet>,
+}
+
+impl LpLocalTestSetup {
+    /// Funds the user wallet with the given amount from every configured faucet.
+    pub async fn fund_user_wallet(&mut self, amount: u64) -> Result<()> {
+        self.clients.client.sync_state().await?;
+        for asset in self.faucets.iter() {
+            fund_wallet(
+                &mut self.clients,
+                &self.user,
+                &asset.config,
+                &asset.faucet.id().clone(),
+                amount,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Funds the user wallet only for faucets where the on-chain balance is below `amount`.
+    pub async fn maybe_fund_user_wallet(&mut self, amount: u64) -> Result<()> {
+        self.clients.client.sync_state().await?;
+        let vault =
+            fetch_vault_for_account_from_chain(&self.clients.rpc_api, &self.user.id()).await?;
+
+        for asset in self.faucets.iter() {
+            let faucet_id = asset.faucet.id();
+            let current = vault.get_balance(faucet_id).unwrap_or(0);
+            if current >= amount {
+                continue;
+            }
+            let needed = amount - current;
+            fund_wallet(
+                &mut self.clients,
+                &self.user,
+                &asset.config,
+                &faucet_id,
+                needed,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+}
+
+/// Sets up the test environment for lp_local deposit tests: faucets, user, lp_local pool, funding.
+pub async fn setup_lp_local_test_environment() -> Result<LpLocalTestSetup> {
+    dotenv::dotenv().ok();
+
+    let endpoint_label =
+        env::var("MIDEN_NODE_ENDPOINT").unwrap_or_else(|_| "localhost".to_string());
+    let endpoint = match endpoint_label.as_str() {
+        "testnet" => Endpoint::testnet(),
+        "devnet" => Endpoint::devnet(),
+        _ => Endpoint::localhost(),
+    };
+
+    let base_dir = PathBuf::from("tmp").join(&endpoint_label);
+    fs::create_dir_all(&base_dir)?;
+
+    let keystore_path = base_dir.join("keystore");
+    let store_path = base_dir.join("store.sqlite3");
+    let state_path = base_dir.join("test_state.toml");
+
+    let force_fresh = env::var("CLEAN_TEST").map_or(false, |v| v == "1");
+
+    if force_fresh && store_path.exists() {
+        fs::remove_file(&store_path)?;
+    }
+
+    let keystore_str = keystore_path.to_str().unwrap();
+    let store_str = store_path.to_str().unwrap();
+
+    let mut clients = instantiate_simple_client(keystore_str, store_str, &endpoint).await?;
+    let keystore = FilesystemKeyStore::new(keystore_path.clone())?;
+
+    let mut is_user_fresh = force_fresh;
+    let (faucets, user) = if force_fresh {
+        deploy_fresh(&mut clients, &keystore).await?
+    } else {
+        match load_test_state(&state_path) {
+            Some(cached) => match try_restore_from_cache(&mut clients, &cached).await {
+                Ok(result) => result,
+                Err(_) => {
+                    is_user_fresh = true;
+                    deploy_fresh(&mut clients, &keystore).await?
+                }
+            },
+            None => {
+                is_user_fresh = true;
+                deploy_fresh(&mut clients, &keystore).await?
+            }
+        }
+    };
+
+    save_test_state(&state_path, &build_cached_state(&faucets, &user))?;
+
+    let token0_id = faucets[0].faucet.id();
+    let token1_id = faucets[1].faucet.id();
+    let (lp_local_pool, _) = deploy_lp_local_pool(
+        &mut clients.client,
+        keystore.clone(),
+        &token0_id,
+        &token1_id,
+    )
+    .await?;
+
+    let mut setup = LpLocalTestSetup {
+        clients,
+        user,
+        lp_local_pool,
+        faucets,
+    };
+
+    if is_user_fresh {
+        setup.maybe_fund_user_wallet(DEFAULT_FUND_AMOUNT).await?;
+    }
+
+    Ok(setup)
 }

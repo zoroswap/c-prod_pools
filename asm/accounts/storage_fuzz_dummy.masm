@@ -13,7 +13,7 @@ const MAP_SLOT = word("zoro::storage_fuzz_dummy::map_slot")
 
 #! No-op proc—minimal code required for valid library.
 pub proc get_value() -> felt
-    push.VALUE_SLOT[0..2] exec.active_account::get_item debug.stack.4drop drop drop
+    push.VALUE_SLOT[0..2] exec.active_account::get_item drop drop drop
     exec.sys::truncate_stack
 end
 

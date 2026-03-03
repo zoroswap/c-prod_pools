@@ -33,7 +33,7 @@ use tracing::{debug, info, warn};
 
 use serde::{Deserialize, Serialize};
 
-use crate::pool_ops::{get_math_library, get_storage_utils_library};
+use crate::pool_ops::{get_lp_local_library, get_math_library, get_storage_utils_library};
 use crate::utils::{
     create_library, extract_full_account, fetch_vault_for_account_from_chain, slot_name,
 };
@@ -191,6 +191,72 @@ pub async fn deploy_c_prod_pool(
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     Ok((c_prod_pool_contract, key_pair))
+}
+
+/// Deploys an lp_local pool account for the given token pair.
+///
+/// Storage slots (must match lp_local.masm):
+///   - `reserve_mapping`: [reserve0, reserve1, 0, 0] (initially empty)
+///   - `total_supply`: [total_lp, 0, 0, 0] (initially empty)
+///   - `user_deposits_mapping`: map slot (initially empty)
+pub async fn deploy_lp_local_pool(
+    client: &mut MidenClient,
+    keystore: FilesystemKeyStore,
+    token0_id: &AccountId,
+    token1_id: &AccountId,
+) -> Result<(Account, AuthSecretKey), ClientError> {
+    let _ = (token0_id, token1_id);
+    let lp_local_library = get_lp_local_library()
+        .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
+
+    let reserve_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
+    let total_supply_slot =
+        StorageSlot::with_empty_value(slot_name("zoro::lp_local::total_supply"));
+    let mut user_deposits_mapping = StorageMap::new();
+    user_deposits_mapping.insert(
+        Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(1)]),
+        Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(1)]),
+    )?;
+    let user_deposits_slot = StorageSlot::with_map(
+        slot_name("zoro::lp_local::user_deposits_mapping"),
+        user_deposits_mapping,
+    );
+
+    let lp_local_component = AccountComponent::new(
+        lp_local_library,
+        vec![reserve_slot, total_supply_slot, user_deposits_slot],
+    )
+    .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
+    .with_supports_all_types();
+
+    let mut init_seed = [0_u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+    let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
+
+    let lp_local_contract = AccountBuilder::new(init_seed)
+        .account_type(AccountType::RegularAccountUpdatableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(lp_local_component)
+        .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
+        .with_component(BasicWallet)
+        .build()
+        .map_err(|e| anyhow!("Failed to build lp_local contract: {e:?}"))
+        .unwrap();
+
+    keystore.add_key(&key_pair).unwrap();
+    client
+        .add_account(&lp_local_contract.clone(), false)
+        .await?;
+    client.sync_state().await?;
+
+    // let dummy_tx = TransactionRequestBuilder::new().build()?;
+    // let _ = client
+    //     .submit_new_transaction(lp_local_contract.id(), dummy_tx)
+    //     .await?;
+    // client.sync_state().await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    Ok((lp_local_contract, key_pair))
 }
 
 /// Deploys a dummy account for storage_utils fuzz tests.

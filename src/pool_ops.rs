@@ -1,3 +1,4 @@
+use crate::utils::create_library;
 use anyhow::{Result, anyhow};
 use miden_client::{
     Felt, Word,
@@ -9,12 +10,12 @@ use miden_client::{
 };
 use miden_protocol::{
     FieldElement,
+    crypto::rand::Randomizable,
     note::{NoteInputs, NoteScript},
     transaction::{TransactionKernel, TransactionScript},
 };
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use std::{fs, path::PathBuf};
-
-use crate::utils::create_library;
 
 /// Compiles the pool MASM library from source.
 pub fn get_pool_library() -> Result<Library> {
@@ -41,9 +42,10 @@ pub fn get_math_library() -> Result<Library> {
 }
 
 /// Compiles the lp_local MASM library (get_lp_amount_out, deposit, withdraw, etc.).
-/// Depends on the math library.
+/// Depends on math and storage_utils libraries.
 pub fn get_lp_local_library() -> Result<Library> {
     let math_library = get_math_library()?;
+    let storage_utils_library = get_storage_utils_library()?;
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let path: PathBuf = [manifest_dir, "asm", "accounts", "lp_local.masm"]
         .iter()
@@ -52,7 +54,9 @@ pub fn get_lp_local_library() -> Result<Library> {
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(math_library)
-        .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?;
+        .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
+        .with_static_library(storage_utils_library)
+        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?;
     create_library(assembler, "zoro::lp_local", &source)
         .map_err(|e| anyhow!("Failed to compile lp_local library: {e:?}"))
 }
@@ -128,6 +132,75 @@ pub fn compile_pool_tx_script(
     let source =
         format!("use zoro::c_prod_pool\nbegin\n    exec.c_prod_pool::{procedure_name}\nend");
     compile_custom_tx_script(pool_library, &source)
+}
+
+/// Compiles the lp_local deposit note script.
+/// The script loads assets and user_id from the note via active_note::get_assets/get_inputs,
+/// then calls lp_local::deposit with [ASSET0, ASSET1, user_id_prefix, user_id_suffix].
+pub fn compile_lp_local_note_script(lp_local_library: &Library) -> Result<NoteScript> {
+    let source = r#"use miden::protocol::active_note
+use zoro::lp_local
+use miden::core::sys
+begin
+    # Load assets from note (dest_ptr=0)
+    push.0 exec.active_note::get_assets
+    # => [num_assets, 0]
+    swap drop
+    # => [num_assets]
+    push.2 eq assert
+    # => []
+    exec.active_note::get_sender
+    # => [sender_prefix, sender_suffix]
+    padw mem_loadw_be.0 padw mem_loadw_be.4
+    # => [ASSET0, ASSET1, sender_prefix, sender_suffix ]
+    call.lp_local::deposit
+    exec.sys::truncate_stack
+end"#;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(lp_local_library.clone())
+        .map_err(|e| anyhow!("Failed to add lp_local library to assembler: {e:?}"))?;
+    let program = assembler
+        .assemble_program(source)
+        .map_err(|e| anyhow!("Failed to compile lp_local deposit note script: {e:?}"))?;
+    Ok(NoteScript::new(program))
+}
+
+/// Builds a deposit note targeting the lp_local pool.
+/// Note inputs: [user_id_prefix, user_id_suffix].
+pub fn build_lp_local_deposit_note(
+    pool_id: AccountId,
+    lp_local_library: &Library,
+    token0_asset: FungibleAsset,
+    token1_asset: FungibleAsset,
+    user_id: AccountId,
+    sender: AccountId,
+) -> Result<Note> {
+    let script = compile_lp_local_note_script(lp_local_library)?;
+
+    let inputs = NoteInputs::new(vec![
+        user_id.prefix().as_felt().into(),
+        user_id.suffix().into(),
+    ])?;
+
+    let assets = NoteAssets::new(vec![token0_asset.into(), token1_asset.into()])?;
+
+    let tag = NoteTag::with_account_target(pool_id);
+    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
+
+    let mut seed = [0; 32];
+    // default from os to get initial seed
+    let mut std_rng = StdRng::from_os_rng();
+    std_rng.fill(&mut seed);
+    // regenerate with a seed
+    // TODO: maybe not needed?
+    let mut rng = StdRng::from_seed(seed);
+    let mut seed = [0u8; 32];
+    rng.fill(&mut seed);
+    let serial_num = Word::from_random_bytes(&seed)
+        .ok_or(anyhow!("Error generating new word, no word was produced"))?;
+    let recipient = NoteRecipient::new(serial_num, script, inputs);
+    Ok(Note::new(assets, metadata, recipient))
 }
 
 /// Compiles a note script that calls the given pool procedure via `call`.
@@ -320,6 +393,17 @@ mod tests {
     fn test_swap_output() {
         let out = compute_swap_output(1_000, 50_000, 50_000);
         assert!(out > 970 && out < 1000, "out={out}");
+    }
+
+    #[test]
+    fn test_lp_local_deposit_note_script_compiles() {
+        let lp_lib = get_lp_local_library().expect("lp_local library");
+        let result = compile_lp_local_note_script(&lp_lib);
+        assert!(
+            result.is_ok(),
+            "lp_local deposit note script: {:?}",
+            result.err()
+        );
     }
 
     #[test]

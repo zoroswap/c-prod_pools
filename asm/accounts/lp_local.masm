@@ -1,9 +1,10 @@
 use miden::core::math::u64
+use miden::protocol::native_account
+use miden::protocol::active_account
+use miden::core::sys
+
 use zoro::math
 use zoro::storage_utils
-
-use miden::protocol::native_account
-use miden::core::sys
 
 const MINIMUM_LIQUIDITY = 100
 
@@ -15,9 +16,12 @@ const USER_ACCOUNT_ID_PREFIX = 20
 const USER_ACCOUNT_ID_SUFFIX = 21
 
 
+### ERROR CODES
+const ERR_ZERO_ADDRESS = "Zero address"
+
 ### STORAGE SLOTS
 const USER_DEPOSITS_MAPPING_SLOT = word("zoro::lp_local::user_deposits_mapping")
-const RESERVE_SLOT = word("zoro::lp_local::reserve_mapping")
+const RESERVE_SLOT = word("zoro::lp_local::reserve")
 const TOTAL_SUPPLY_SLOT = word("zoro::lp_local::total_supply")
 #################
 #! Computes the LP amount out for a deposit of amount_0 and amount_1.
@@ -45,7 +49,13 @@ pub proc get_lp_amount_out(total_supply: felt, amount_0: felt, amount_1: felt, r
     else
         ### subsequent deposits: min(lp_amount_0, lp_amount_1)
         ### lp_amount_0 = amount_0 * total_supply / reserve_0
-        loc_load.1 u32split loc_load.0 u32split exec.u64::wrapping_mul loc_load.3 u32split exec.u64::div
+        loc_load.1 u32split loc_load.0 u32split 
+        # => [amount_0_high, amount_0_low, total_supply_high, total_supply_low]
+        exec.u64::wrapping_mul 
+        # => [numerator_high, numerator_low]
+        loc_load.3 u32split 
+        # => [reserve_0_hi, reserve_0_low, numerator_hi, numerator_low]
+        exec.u64::div
         # => [lp_amount_0_high, lp_amount_0_low]
         loc_load.2 u32split loc_load.0 u32split exec.u64::wrapping_mul loc_load.4 u32split exec.u64::div
         # => [lp_amount_1_high, lp_amount_1_low, lp_amount_0_high, lp_amount_0_low]
@@ -59,41 +69,100 @@ pub proc get_lp_amount_out(total_supply: felt, amount_0: felt, amount_1: felt, r
     exec.sys::truncate_stack
 end
 
-
-proc _get_user_deposit_key() -> Word 
-    push.0.0 mem_load.USER_ACCOUNT_ID_SUFFIX mem_load.USER_ACCOUNT_ID_PREFIX
+proc assert_non_zero_address(prefix: felt, suffix: felt)
+    neq.0 swap.1 neq.0
+    # => [is_suffix_non_zero, is_prefix_non_zero]
+    or assert.err=ERR_ZERO_ADDRESS
+end
+proc get_current_user_deposit_key() -> Word 
+    mem_load.USER_ACCOUNT_ID_SUFFIX mem_load.USER_ACCOUNT_ID_PREFIX
+    exec.assert_non_zero_address
+    mem_load.USER_ACCOUNT_ID_SUFFIX mem_load.USER_ACCOUNT_ID_PREFIX
+    # => [prefix, suffix]
+    exec.get_user_deposit_key
+    # => [USER_DEPOSIT_KEY]
+    exec.sys::truncate_stack
 end
 
-pub proc total_supply() -> felt
+proc get_user_deposit_key#(prefix: felt, suffix: felt) -> Word 
+    push.0.0 movup.3 movup.3
+    # => [prefix, suffix, 0 , 0 ] == [KEY]
+end
+
+
+
+pub proc total_supply#() -> felt
     push.TOTAL_SUPPLY_SLOT[0..2] exec.active_account::get_item
+    drop drop drop
 end
 
-pub proc get_reserves() -> (felt, felt)
+pub proc get_reserve#() -> (felt, felt)
     push.RESERVE_SLOT[0..2] exec.active_account::get_item
+    drop drop
 end
 
-proc _set_reserves(reserve_0: felt, reserve_1: felt)
-    push.RESERVE_SLOT[0..2] exec.native_account::set_item
+proc set_reserve#(reserve_0: felt, reserve_1: felt)
+    ### amount validation vs vault
+    push.0.0push.RESERVE_SLOT[0..2] exec.native_account::set_item
     dropw
+end
+
+@locals(2)
+proc add_to_reserve#(amount_0: felt, amount_1: felt)
+    # loc.0: amount_0
+    # loc.1: amount_1
+    loc_store.0 loc_store.1
+    # => []
+    exec.get_reserve
+    # => [reserve_0, reserve_1]
+    loc_load.0 exec.math::safe_add
+    # => [new_reserve_0, reserve_1]
+    swap
+    loc_load.1 exec.math::safe_add
+    # => [new_reserve_1, new_reserve_0]
+    swap
+    # => [new_reserve_0, new_reserve_1]
+    exec.set_reserve
+end
+
+@locals(2)
+proc sub_from_reserve#(amount_0: felt, amount_1: felt)
+    # loc.0: amount_0
+    # loc.1: amount_1
+    loc_store.0 loc_store.1
+    # => []
+    exec.get_reserve
+    # => [reserve_0, reserve_1]
+    loc_load.0 exec.math::safe_sub
+    # => [new_reserve_0, reserve_1]
+    swap
+    loc_load.1 exec.math::safe_sub
+    # => [new_reserve_1, new_reserve_0]
+    swap
+    # => [new_reserve_0, new_reserve_1]
+    exec.set_reserve
 end
     
 
 @locals(3)
-proc mint(amount: felt, beneficiary_prefix: felt, beneficiary_suffix: felt)
+proc mint#(amount: felt, beneficiary_prefix: felt, beneficiary_suffix: felt)
     # loc.0: amount
     # loc.1: beneficiary_prefix
     # loc.2: beneficiary_suffix
     loc_store.0 loc_store.1 loc_store.2
     # => []
+    push.0.0.0 loc_load.0
+    # => [AMOUNT]
     ### add to mapping USER_DEPOSITS_MAPPING_SLOT
-    ### increment total supply
-
-
-    ### updating total supply
-    loc_load.0 push.TOTAL_SUPPLY_SLOT[0..2] exec.add_to_storage_item 
+    loc_load.2 loc_load.1 exec.get_user_deposit_key
+    # => [USER_DEPOSIT_KEY, AMOUNT]
+    push.USER_DEPOSITS_MAPPING_SLOT[0..2]
+    # => [slot_id_prefix, slot_id_suffix, USER_DEPOSIT_KEY, AMOUNT]
+    exec.storage_utils::add_to_map_item
     drop
-
-
+    ### updating total supply
+    loc_load.0 push.TOTAL_SUPPLY_SLOT[0..2] exec.storage_utils::add_to_storage_item 
+    drop
 end 
 
 
@@ -107,65 +176,45 @@ end
 pub proc deposit
     # loc.0: ASSET0
     # loc.4: ASSET1
-    # loc.5: lp_amount_out
-    loc_storew_be.0 dropw loc_storew_be.4 dropw mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
-    
-    ### receive assets
-    #padw padw padw loc_loadw_be.0 exec.receive_asset
-    #padw padw padw loc_loadw_be.4 exec.receive_asset
-    loc_loadw_be.0 exec.native_account::add_asset dropw
-    loc_loadw_be.4 exec.native_account::add_asset dropw
-
+    # loc.8: lp_amount_out
+    loc_storew_le.0 dropw loc_storew_le.4 dropw mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
     ### get_lp_amount_out (total_supply: felt, amount_0: felt, amount_1: felt, reserve_0: felt, reserve_1: felt)
-    exec.get_reserves
+    exec.get_reserve
     # => [reserve_0, reserve_1]
     loc_load.7 loc_load.3
     # => [amount_0, amount_1, reserve_0, reserve_1]
     exec.total_supply
     # => [total_supply, amount_0, amount_1, reserve_0, reserve_1]
-
     exec.get_lp_amount_out
     # => [lp_amount_out]
-    loc_store.5
+    loc_store.8
     ### check if initial deposit
     exec.total_supply eq.0 
     if.true
         ### burn minimum liquidity
         push.0.0 push.MINIMUM_LIQUIDITY
         exec.mint
-        dropw
     end
-
     ### mint to user
-    push.USER_ACCOUNT_ID_SUFFIX push.USER_ACCOUNT_ID_PREFIX loc_load.5 
+    
+    mem_load.USER_ACCOUNT_ID_SUFFIX mem_load.USER_ACCOUNT_ID_PREFIX
+    loc_load.8
+    # => [lp_amount_out,user_id_prefix, user_id_suffix]
     exec.mint
-    dropw
 
-    #mem_storew_be.DEPOSIT_KEY_LOC
-    #movup.4
-    # => [lp_amount_out, KEY]
-    dup mem_store.LP_SHARES_AMOUNT_ADDR
-    push.0.0.0
-    # => [SHARE_AMOUNT, KEY]
-    swapw
-    # => [KEY, SHARE_AMOUNT]
-    push.USER_DEPOSITS_MAPPING_SLOT[0..2]
-    # => [slot_id_prefix, slot_id_suffix, KEY, SHARE_AMOUNT]
-    exec.add_to_map_item
-
-    # update total supply
-    mem_load.LP_SHARES_AMOUNT_ADDR push.0.0.0
-    padw mem_loadw_be.DEPOSIT_KEY_LOC
-    # => [KEY, SHARE_AMOUNT]
-    exec.get_lp_shares_total_supply_key
-    # => [TOTAL_SUPPLY_KEY, SHARE_AMOUNT]
-    push.USER_DEPOSITS_MAPPING_SLOT[0..2]
-    # => [slot_id_prefix, slot_id_suffix, KEY, SHARE_AMOUNT]
-    exec.add_to_map_item
-    # => []
+    ### receive assets
+    ### reserve needs to be updated 
+    #padw padw padw loc_loadw_be.0 exec.receive_asset
+    #padw padw padw loc_loadw_be.4 exec.receive_asset
+    padw loc_loadw_le.0 exec.native_account::add_asset dropw    
+    padw loc_loadw_le.4 exec.native_account::add_asset dropw
+    ## make sure asset order correct
+    loc_load.7 loc_load.3
+    # => [amount_0, amount_1]
+    exec.add_to_reserve
 end
 
-#! Inputs:  [user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET_OUT, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage]
+##! Inputs:  [user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET_OUT, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage]
 #pub proc withdraw
 #    dupw
 #    # => [user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET_OUT, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0]
@@ -212,11 +261,11 @@ end
 #end
 
 
-#! Atomically increments a storage map entry: map[KEY] += VALUE.
-#! Reads the current value via get_map_item, adds VALUE, writes back via set_map_item.
-#!
-#! Inputs: [slot_id_prefix, slot_id_suffix, KEY, VALUE]
-#! Outputs: []
+##! Atomically increments a storage map entry: map[KEY] += VALUE.
+##! Reads the current value via get_map_item, adds VALUE, writes back via set_map_item.
+##!
+##! Inputs: [slot_id_prefix, slot_id_suffix, KEY, VALUE]
+##! Outputs: []
 #proc add_to_map_item
 #    # Save slot ID to memory
 #    mem_store.HELPER_SLOT_ID_PREFIX_LOC
