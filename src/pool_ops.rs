@@ -353,6 +353,18 @@ pub fn compute_expected_lp(
     }
 }
 
+/// Expected output amounts for a withdraw.
+pub fn compute_expected_withdraw(
+    total_supply: u64,
+    lp_amount: u64,
+    reserve_0: u64,
+    reserve_1: u64,
+) -> (u64, u64) {
+    let amount_0 = lp_amount as u128 * reserve_0 as u128 / total_supply as u128;
+    let amount_1 = lp_amount as u128 * reserve_1 as u128 / total_supply as u128;
+    (amount_0 as u64, amount_1 as u64)
+}
+
 /// Expected output amount for a swap (0.3% fee).
 pub fn compute_swap_output(amount_in: u64, reserve_in: u64, reserve_out: u64) -> u64 {
     let fee_adjusted = amount_in as u128 * 997;

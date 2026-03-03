@@ -3,7 +3,8 @@ mod test_utils;
 use anyhow::Result;
 use c_prod_pool::pool_ops::{
     build_lp_local_deposit_note, compile_custom_tx_script, compile_storage_fuzz_tx_script,
-    compute_expected_lp, get_lp_local_library, get_math_library, get_pool_library, isqrt,
+    compute_expected_lp, compute_expected_withdraw, get_lp_local_library, get_math_library,
+    get_pool_library, isqrt,
 };
 use c_prod_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
 use miden_client::{
@@ -355,6 +356,113 @@ async fn get_lp_amount_out_fuzz_test() -> Result<()> {
             reserve_1,
             got,
             expected,
+        );
+    }
+
+    println!("All get_lp_amount_out fuzz iterations passed.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn simulate_withdraw_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let min_reserve: u64 = 1_000;
+    let max_reserve: u64 = 1_000_000_000;
+    let min_amount: u64 = 1;
+    let max_amount: u64 = 100_000_000;
+    let iterations: usize = 100;
+
+    let mut setup = setup_lightweight_environment().await?;
+    let lp_local_library = get_lp_local_library()?;
+    let mut rng = rand::rng();
+
+    let edge_cases: Vec<(u64, u64, u64, u64)> = vec![
+        (100, 100, 100, 0),
+        (1_000_000, 1_000_000, 1_000_000, 0),
+        (1000, 100, 100, 1000),
+        (10000, 500, 500, 50000),
+    ];
+
+    for (i, (total_supply, lp_amount, reserve_0, reserve_1)) in edge_cases
+        .into_iter()
+        .chain((0..iterations).map(|_| {
+            let total_supply = if rng.random_range(0..2) == 0 {
+                0
+            } else {
+                rng.random_range(min_reserve..=max_reserve)
+            };
+            let lp_amount = rng.random_range(min_amount..=max_amount);
+            let reserve_0 = if total_supply == 0 {
+                0
+            } else {
+                rng.random_range(min_reserve..=max_reserve)
+            };
+            let reserve_1 = if total_supply == 0 {
+                0
+            } else {
+                rng.random_range(min_reserve..=max_reserve)
+            };
+            (total_supply, lp_amount, reserve_0, reserve_1)
+        }))
+        .enumerate()
+    {
+        if total_supply == 0 || (total_supply > 0 && (reserve_0 == 0 || reserve_1 == 0)) {
+            continue;
+        }
+        let expected = compute_expected_withdraw(total_supply, lp_amount, reserve_0, reserve_1);
+
+        let source = format!(
+            "use zoro::lp_local\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.{reserve_1}.{reserve_0}.{lp_amount}.{total_supply}\n\
+                 call.lp_local::simulate_withdraw\n\
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let script = compile_custom_tx_script(&lp_local_library, &source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.account.id(),
+                script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let got = (stack[0].as_int(), stack[1].as_int());
+
+        println!(
+            "[{}] ts={} lp={} ar0={} r1={} => got=({},{}), expected=({},{})",
+            i + 1,
+            total_supply,
+            lp_amount,
+            reserve_0,
+            reserve_1,
+            got.0,
+            got.1,
+            expected.0,
+            expected.1,
+        );
+
+        assert_eq!(
+            got,
+            expected,
+            "Mismatch at iteration {}: total_supply={}, lp_amount={}, reserve_0={}, reserve_1={}, got=({},{}), expected=({},{})",
+            i + 1,
+            total_supply,
+            lp_amount,
+            reserve_0,
+            reserve_1,
+            got.0,
+            got.1,
+            expected.0,
+            expected.1,
         );
     }
 
