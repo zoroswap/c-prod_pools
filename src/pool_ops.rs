@@ -458,13 +458,16 @@ mod tests {
     #[test]
     fn test_storage_fuzz_scripts_compile() {
         let add_source = "use zoro::storage_fuzz_dummy\n\
-             use zoro::storage_utils\n\
+             #use zoro::storage_utils\n\
              use miden::core::sys\n\
+
+
+             const VALUE_SLOT = word(\"zoro::storage_fuzz_dummy::value_slot\")\n\
+             const MAP_SLOT = word(\"zoro::storage_fuzz_dummy::map_slot\")\n\
              begin\n\
-                 push.storage_fuzz_dummy::VALUE_SLOT[0..2]\n\
                  push.42\n\
-                 swap.2\n\
-                 call.storage_utils::add_to_storage_item\n\
+                 push.VALUE_SLOT[0..2]\n\
+                 call.storage_fuzz_dummy::add_to_storage_item\n\
                  exec.sys::truncate_stack\n\
              end";
         let result = compile_storage_fuzz_tx_script(add_source);

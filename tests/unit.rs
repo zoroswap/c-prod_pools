@@ -105,6 +105,7 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
     }
 
     println!("All {iterations} fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -165,6 +166,7 @@ async fn sqrt_u32_fuzz_test() -> Result<()> {
     }
 
     println!("All sqrt_u32 fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -253,6 +255,7 @@ async fn sqrt_felt_fuzz_test() -> Result<()> {
     }
 
     println!("All sqrt felt fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -360,6 +363,7 @@ async fn get_lp_amount_out_fuzz_test() -> Result<()> {
     }
 
     println!("All get_lp_amount_out fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -467,6 +471,7 @@ async fn simulate_withdraw_fuzz_test() -> Result<()> {
     }
 
     println!("All get_lp_amount_out fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -478,11 +483,13 @@ async fn add_to_storage_item_fuzz_test() -> Result<()> {
     let min_inc: u64 = 1;
     let max_inc: u64 = 1_000_000_000;
 
-    let mut setup = setup_storage_fuzz_environment(1, 1).await?;
+    let initial_value = 1;
+    let initial_map_value = 1;
+    let mut setup = setup_storage_fuzz_environment(initial_value, initial_map_value).await?;
     let mut rng = rand::rng();
 
     let edge_cases: Vec<u64> = vec![0, 1];
-    let mut accumulated: u64 = 0;
+    let mut accumulated: u64 = initial_value;
 
     for (i, inc) in edge_cases
         .into_iter()
@@ -504,7 +511,6 @@ async fn add_to_storage_item_fuzz_test() -> Result<()> {
                  exec.sys::truncate_stack\n\
              end"
         );
-
         let script = compile_storage_fuzz_tx_script(&source)?;
 
         let stack = setup
@@ -554,6 +560,7 @@ async fn add_to_storage_item_fuzz_test() -> Result<()> {
     }
 
     println!("All add_to_storage_item fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -669,6 +676,7 @@ async fn add_sub_storage_item_fuzz_test() -> Result<()> {
         "All add_sub_storage_item fuzz iterations ({} add+sub) passed.",
         iterations
     );
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -761,6 +769,7 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
     }
 
     println!("All add_to_map_item fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -854,6 +863,7 @@ async fn sub_from_map_item_fuzz_test() -> Result<()> {
     }
 
     println!("All add_to_map_item fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -906,6 +916,7 @@ async fn sub_from_storage_item_test() -> Result<()> {
         got, expected,
     );
 
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -952,6 +963,7 @@ async fn sub_from_storage_item_underflow_test() -> Result<()> {
         result.unwrap_err()
     );
 
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -1043,6 +1055,7 @@ async fn lp_mint_fuzz_test() -> Result<()> {
     }
 
     println!("All lp_mint fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -1179,6 +1192,7 @@ async fn lp_burn_fuzz_test() -> Result<()> {
     }
 
     println!("All lp_burn fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -1298,6 +1312,7 @@ async fn deposit_happy_path_test() -> Result<()> {
         user_deposit_balance[0].as_int(),
     );
 
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
 
@@ -1358,5 +1373,6 @@ async fn deposit_initial_underflow_test() -> Result<()> {
         "deposit_initial_underflow_test: correctly failed with {:?}",
         result.unwrap_err()
     );
+    tokio::time::sleep(Duration::from_secs(7)).await;
     Ok(())
 }
