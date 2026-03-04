@@ -63,7 +63,7 @@ end
 #! Inputs: [slot_id_prefix, slot_id_suffix, KEY, VALUE]
 #! Outputs: []
 @locals(9)
-pub proc sub_from_map_item #(slot_id_prefix: felt, slot_id_suffix: felt, key: Word, sub_by: felt) -> felt
+pub proc sub_from_map_item (slot_id_prefix: felt, slot_id_suffix: felt, key: word, sub_by: felt) -> felt
     # loc.0: slot_id_prefix
     # loc.1: slot_id_suffix
     # loc.4-7: key

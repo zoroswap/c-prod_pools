@@ -17,7 +17,7 @@ use miden_client::{
 use std::{collections::BTreeSet, time::Duration};
 use test_utils::*;
 
-use miden_client::{account::Account, rpc::NodeRpcClient};
+use miden_client::rpc::NodeRpcClient;
 
 #[tokio::test]
 async fn smoke_test() -> Result<()> {
@@ -63,7 +63,7 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
             .clients
             .client
             .execute_program(
-                setup.account.id(),
+                setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -100,7 +100,7 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
         // let tx_result = setup
         //     .clients
         //     .client
-        //     .execute_transaction(setup.account.id(), tx_request)
+        //     .execute_transaction(setup.contract.id(), tx_request)
         //     .await?;
     }
 
@@ -142,7 +142,7 @@ async fn sqrt_u32_fuzz_test() -> Result<()> {
             .clients
             .client
             .execute_program(
-                setup.account.id(),
+                setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -224,14 +224,14 @@ async fn sqrt_felt_fuzz_test() -> Result<()> {
         // let tx_result = setup
         //     .clients
         //     .client
-        //     .execute_transaction(setup.account.id(), tx_request)
+        //     .execute_transaction(setup.contract.id(), tx_request)
         //     .await?;
 
         let stack = setup
             .clients
             .client
             .execute_program(
-                setup.account.id(),
+                setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -324,7 +324,7 @@ async fn get_lp_amount_out_fuzz_test() -> Result<()> {
             .clients
             .client
             .execute_program(
-                setup.account.id(),
+                setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -432,7 +432,7 @@ async fn simulate_withdraw_fuzz_test() -> Result<()> {
             .clients
             .client
             .execute_program(
-                setup.account.id(),
+                setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -517,7 +517,7 @@ async fn add_to_storage_item_fuzz_test() -> Result<()> {
             .clients
             .client
             .execute_program(
-                setup.dummy_account.id(),
+                setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -543,7 +543,7 @@ async fn add_to_storage_item_fuzz_test() -> Result<()> {
         let tx_result = setup
             .clients
             .client
-            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .submit_new_transaction(setup.contract.id(), tx_request)
             .await?;
 
         setup.clients.client.sync_state().await?;
@@ -631,7 +631,7 @@ async fn add_sub_storage_item_fuzz_test() -> Result<()> {
             .clients
             .client
             .execute_program(
-                setup.dummy_account.id(),
+                setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -657,7 +657,7 @@ async fn add_sub_storage_item_fuzz_test() -> Result<()> {
         setup
             .clients
             .client
-            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .submit_new_transaction(setup.contract.id(), tx_request)
             .await?;
 
         setup.clients.client.sync_state().await?;
@@ -722,7 +722,7 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
             .clients
             .client
             .execute_program(
-                setup.dummy_account.id(),
+                setup.contract.id(),
                 add_script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -752,7 +752,7 @@ async fn add_to_map_item_fuzz_test() -> Result<()> {
         let tx_id = setup
             .clients
             .client
-            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .submit_new_transaction(setup.contract.id(), tx_request)
             .await?;
 
         setup.clients.client.sync_state().await?;
@@ -816,7 +816,7 @@ async fn sub_from_map_item_fuzz_test() -> Result<()> {
             .clients
             .client
             .execute_program(
-                setup.dummy_account.id(),
+                setup.contract.id(),
                 sub_script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -846,7 +846,7 @@ async fn sub_from_map_item_fuzz_test() -> Result<()> {
         let tx_id = setup
             .clients
             .client
-            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .submit_new_transaction(setup.contract.id(), tx_request)
             .await?;
 
         setup.clients.client.sync_state().await?;
@@ -894,7 +894,7 @@ async fn sub_from_storage_item_test() -> Result<()> {
         .clients
         .client
         .execute_program(
-            setup.dummy_account.id(),
+            setup.contract.id(),
             sub_script.clone(),
             AdviceInputs::default(),
             BTreeSet::new(),
@@ -946,7 +946,7 @@ async fn sub_from_storage_item_underflow_test() -> Result<()> {
         .clients
         .client
         .execute_program(
-            setup.dummy_account.id(),
+            setup.contract.id(),
             sub_fail_script,
             AdviceInputs::default(),
             BTreeSet::new(),
@@ -978,8 +978,8 @@ async fn lp_mint_fuzz_test() -> Result<()> {
     let mut setup = setup_lp_local_fuzz_environment().await?;
     let mut rng = rand::rng();
 
-    let prefix = setup.dummy_account.id().prefix().as_felt();
-    let suffix = setup.dummy_account.id().suffix();
+    let prefix = setup.contract.id().prefix().as_felt();
+    let suffix = setup.contract.id().suffix();
 
     let mut expected_total_supply: u64 = 0;
     let mut expected_user_balance: u64 = 0;
@@ -1006,7 +1006,7 @@ async fn lp_mint_fuzz_test() -> Result<()> {
             .clients
             .client
             .execute_program(
-                setup.dummy_account.id(),
+                setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -1036,7 +1036,7 @@ async fn lp_mint_fuzz_test() -> Result<()> {
         setup
             .clients
             .client
-            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .submit_new_transaction(setup.contract.id(), tx_request)
             .await?;
         setup.clients.client.sync_state().await?;
 
@@ -1071,8 +1071,8 @@ async fn lp_burn_fuzz_test() -> Result<()> {
     let mut setup = setup_lp_local_fuzz_environment().await?;
     let mut rng = rand::rng();
 
-    let prefix = setup.dummy_account.id().prefix().as_felt();
-    let suffix = setup.dummy_account.id().suffix();
+    let prefix = setup.contract.id().prefix().as_felt();
+    let suffix = setup.contract.id().suffix();
 
     // Initial mint
     let mint_source = format!(
@@ -1091,14 +1091,14 @@ async fn lp_burn_fuzz_test() -> Result<()> {
     setup
         .clients
         .client
-        .submit_new_transaction(setup.dummy_account.id(), tx_request)
+        .submit_new_transaction(setup.contract.id(), tx_request)
         .await?;
     setup.clients.client.sync_state().await?;
 
     let acc_after = setup
         .clients
         .client
-        .get_account(setup.dummy_account.id().clone())
+        .get_account(setup.contract.id().clone())
         .await?
         .unwrap();
     let acc_after = match acc_after.account_data() {
@@ -1143,7 +1143,7 @@ async fn lp_burn_fuzz_test() -> Result<()> {
             .clients
             .client
             .execute_program(
-                setup.dummy_account.id(),
+                setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
                 BTreeSet::new(),
@@ -1173,7 +1173,7 @@ async fn lp_burn_fuzz_test() -> Result<()> {
         setup
             .clients
             .client
-            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .submit_new_transaction(setup.contract.id(), tx_request)
             .await?;
         setup.clients.client.sync_state().await?;
 
@@ -1212,7 +1212,7 @@ async fn deposit_happy_path_test() -> Result<()> {
     let token1_asset = FungibleAsset::new(token1_id.clone(), amount1)?;
 
     let deposit_note = build_lp_local_deposit_note(
-        setup.lp_local_pool.id(),
+        setup.contract.id(),
         &lp_lib,
         token0_asset,
         token1_asset,
@@ -1220,7 +1220,7 @@ async fn deposit_happy_path_test() -> Result<()> {
         setup.user.id(),
     )?;
 
-    let pool_tag = NoteTag::with_account_target(setup.lp_local_pool.id());
+    let pool_tag = NoteTag::with_account_target(setup.contract.id());
     setup.clients.client.add_note_tag(pool_tag).await?;
 
     let create_req = TransactionRequestBuilder::new()
@@ -1242,12 +1242,12 @@ async fn deposit_happy_path_test() -> Result<()> {
     let _consume_id = setup
         .clients
         .client
-        .submit_new_transaction(setup.lp_local_pool.id(), consume_req)
+        .submit_new_transaction(setup.contract.id(), consume_req)
         .await?;
     setup.clients.client.sync_state().await?;
 
     let deposit_note_2 = build_lp_local_deposit_note(
-        setup.lp_local_pool.id(),
+        setup.contract.id(),
         &lp_lib,
         token0_asset,
         token1_asset,
@@ -1274,7 +1274,7 @@ async fn deposit_happy_path_test() -> Result<()> {
     let _consume_id_2 = setup
         .clients
         .client
-        .submit_new_transaction(setup.lp_local_pool.id(), consume_req_2)
+        .submit_new_transaction(setup.contract.id(), consume_req_2)
         .await?;
     setup.clients.client.sync_state().await?;
 
@@ -1282,7 +1282,7 @@ async fn deposit_happy_path_test() -> Result<()> {
     let acc_after = setup
         .clients
         .client
-        .get_account(setup.lp_local_pool.id().clone())
+        .get_account(setup.contract.id().clone())
         .await?
         .unwrap();
     let acc_after = match acc_after.account_data() {
@@ -1333,7 +1333,7 @@ async fn deposit_initial_underflow_test() -> Result<()> {
     let token1_asset = FungibleAsset::new(token1_id.clone(), amount1)?;
 
     let deposit_note = build_lp_local_deposit_note(
-        setup.lp_local_pool.id(),
+        setup.contract.id(),
         &lp_lib,
         token0_asset,
         token1_asset,
@@ -1341,7 +1341,7 @@ async fn deposit_initial_underflow_test() -> Result<()> {
         setup.user.id(),
     )?;
 
-    let pool_tag = NoteTag::with_account_target(setup.lp_local_pool.id());
+    let pool_tag = NoteTag::with_account_target(setup.contract.id());
     setup.clients.client.add_note_tag(pool_tag).await?;
 
     let create_req = TransactionRequestBuilder::new()
@@ -1362,7 +1362,7 @@ async fn deposit_initial_underflow_test() -> Result<()> {
     let result = setup
         .clients
         .client
-        .submit_new_transaction(setup.lp_local_pool.id(), consume_req)
+        .submit_new_transaction(setup.contract.id(), consume_req)
         .await;
 
     assert!(

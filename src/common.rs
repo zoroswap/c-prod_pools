@@ -212,6 +212,8 @@ pub async fn deploy_lp_local_pool(
     let lp_local_library = get_lp_local_library()
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
 
+    let assets_mapping_slot =
+        StorageSlot::with_empty_map(slot_name("zoro::lp_local::assets_mapping"));
     let reserve_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
     let total_supply_slot =
         StorageSlot::with_empty_value(slot_name("zoro::lp_local::total_supply"));
@@ -227,7 +229,12 @@ pub async fn deploy_lp_local_pool(
 
     let lp_local_component = AccountComponent::new(
         lp_local_library,
-        vec![reserve_slot, total_supply_slot, user_deposits_slot],
+        vec![
+            assets_mapping_slot,
+            reserve_slot,
+            total_supply_slot,
+            user_deposits_slot,
+        ],
     )
     .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
     .with_supports_all_types();
@@ -278,6 +285,8 @@ pub async fn deploy_lp_local_fuzz_dummy(
     let reserve_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
     let total_supply_slot =
         StorageSlot::with_empty_value(slot_name("zoro::lp_local::total_supply"));
+    let assets_mapping_slot =
+        StorageSlot::with_empty_map(slot_name("zoro::lp_local::assets_mapping"));
     let mut user_deposits_mapping = StorageMap::new();
     user_deposits_mapping.insert(
         Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(1)]),
@@ -290,7 +299,12 @@ pub async fn deploy_lp_local_fuzz_dummy(
 
     let component = AccountComponent::new(
         lp_local_fuzz_dummy_library,
-        vec![reserve_slot, total_supply_slot, user_deposits_slot],
+        vec![
+            assets_mapping_slot,
+            reserve_slot,
+            total_supply_slot,
+            user_deposits_slot,
+        ],
     )
     .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
     .with_supports_all_types();

@@ -1,6 +1,7 @@
 use miden::core::math::u64
 use miden::protocol::native_account
 use miden::protocol::active_account
+use miden::protocol::output_note
 use miden::core::sys
 
 use zoro::math
@@ -15,14 +16,22 @@ const USER_ACCOUNT_ID_WORD = 20
 const USER_ACCOUNT_ID_PREFIX = 20
 const USER_ACCOUNT_ID_SUFFIX = 21
 
+const NOTE_DETAILS_WORD = 24
+const NOTE_TAG = 24
+const NOTE_TYPE = 25
+
+const NOTE_RECIPIENT_WORD = 28
+
 
 ### ERROR CODES
 const ERR_ZERO_ADDRESS = "Zero address"
 
 ### STORAGE SLOTS
-const USER_DEPOSITS_MAPPING_SLOT = word("zoro::lp_local::user_deposits_mapping")
+const ASSETS_MAPPING_SLOT = word("zoro::lp_local::assets_mapping")
 const RESERVE_SLOT = word("zoro::lp_local::reserve")
 const TOTAL_SUPPLY_SLOT = word("zoro::lp_local::total_supply")
+const USER_DEPOSITS_MAPPING_SLOT = word("zoro::lp_local::user_deposits_mapping")
+
 #################
 #! Computes the LP amount out for a deposit of amount_0 and amount_1.
 #! For initial deposit (the total supply is 0), it subracts the minimum liquidity.
@@ -275,12 +284,17 @@ end
 #! Inputs: [LP_AMOUNT user_id_prefix, user_id_suffix]
 #! Outputs: [amount_0_out, amount_1_out]
 #!
-@locals(9)
-pub proc withdraw
+@locals(4)
+pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, note_tag: felt, note_type: felt, return_note_recipient: word)
     # loc.0: LP_AMOUNT  = EMPTY, EMPTY, EMPTY, LP_AMOUNT loc.3 lp_amount
-    # loc.5: amount_0_out
-    # loc.6: amount_1_out
-    loc_storew_le.0 dropw mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
+
+    ## LP_AMOUNT to local
+    loc_storew_le.0 dropw 
+    ## user, note tag and type tomemory
+    mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX mem_store.NOTE_TAG mem_store.NOTE_TYPE
+    ## RECIPIENT to memroy
+    mem_storew_le.NOTE_RECIPIENT_WORD dropw
+    # => [] 
     ### get_lp_amount_out (total_supply: felt, amount_0: felt, amount_1: felt, reserve_0: felt, reserve_1: felt)
     exec.get_reserve
     # => [reserve_0, reserve_1]
@@ -289,7 +303,81 @@ pub proc withdraw
     exec.total_supply
     # => [total_supply, lp_amount, reserve_0, reserve_1]
     exec.simulate_withdraw
+    # => [amount_0_out, amount_1_out]
+    # => [RECIPIENT, amount_0_out, amount_1_out]
+    #exec.create_withdraw_return_note
+    # => [note_id]
+    exec.sys::truncate_stack
 end
+
+
+### MEMORY SETTING PROCEDURES aka. global variables
+proc mem_setw_recipient(recipient: word)
+    mem_storew_le.NOTE_RECIPIENT_WORD dropw
+end
+proc mem_set_note_tag(note_tag: felt)
+    mem_store.NOTE_TAG
+end
+proc mem_set_note_type(note_type: felt)
+    mem_store.NOTE_TYPE
+end
+proc mem_set_user_id(user_id_prefix: felt, user_id_suffix: felt)
+    mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
+end
+
+proc mem_get_user_id() -> (felt, felt)
+    mem_load.USER_ACCOUNT_ID_PREFIX mem_load.USER_ACCOUNT_ID_SUFFIX
+    exec.sys::truncate_stack
+end
+proc mem_get_note_tag() -> felt
+    mem_load.NOTE_TAG
+    exec.sys::truncate_stack
+end
+proc mem_get_note_type() -> felt
+    mem_load.NOTE_TYPE
+    exec.sys::truncate_stack
+end
+proc mem_get_recipient() -> word
+    padw mem_load.NOTE_RECIPIENT_WORD
+    exec.sys::truncate_stack
+end
+
+@locals(3)
+proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
+    # loc.0: amount_0_out
+    # loc.1: amount_1_out
+    # loc.2: note_id
+
+    loc_store.0 loc_store.1
+    padw mem_loadw_le.NOTE_RECIPIENT_WORD  mem_load.NOTE_TYPE mem_load.NOTE_TAG
+    exec.output_note::create
+    # => [note_id]
+    loc_store.2
+    # => []
+    ### get assets ids
+    push.0.0.0.0 push.ASSETS_MAPPING_SLOT[0..2] exec.active_account::get_map_item
+    # => [asset_0_id_prefix, asset_0_id_suffix, asset_1_id_prefix, asset_1_id_suffix]
+    loc_store.3 loc_store.4
+    push.0 movdn.2 loc_load.1 movdn.3 
+    # => [ASSET1_OUT]
+    exec.native_account::remove_asset 
+    # => [ASSET1_OUT]
+    loc_load.2 movdn.4
+    # => [ASSET1_OUT, note_id]
+    exec.output_note::add_asset
+    # => []
+    loc_load.0
+    # => [asset_0_out]
+    push.0 loc_load.4 loc_load.3
+    # => [ASSET0_OUT]
+    exec.native_account::remove_asset 
+    # => [ASSET0_OUT]
+    loc_load.2 movdn.4
+    # => [ASSET0_OUT, note_id]
+    exec.output_note::add_asset
+    # => []
+end
+
 #    # => [amount_0_out, amount_1_out]
 #    loc_store.5 loc_store.6
 #    ### check if initial deposit
