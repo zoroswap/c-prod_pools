@@ -89,7 +89,7 @@ pub proc simulate_withdraw#(total_suppply: felt, lp_amount: felt, reserve_0: fel
     loc_load.4
     # => [amount_0_out, amount_1_out]
     ### truncate stack
-    swap.2 drop swap.2 drop
+    exec.sys::truncate_stack
 end
 
 proc assert_non_zero_address(prefix: felt, suffix: felt)
@@ -117,6 +117,8 @@ end
 pub proc total_supply#() -> felt
     push.TOTAL_SUPPLY_SLOT[0..2] exec.active_account::get_item
     drop drop drop
+
+    exec.sys::truncate_stack
 end
 
 pub proc get_reserve#() -> (felt, felt)
@@ -128,6 +130,15 @@ proc set_reserve#(reserve_0: felt, reserve_1: felt)
     ### amount validation vs vault
     push.0.0push.RESERVE_SLOT[0..2] exec.native_account::set_item
     dropw
+end
+
+#! Returns user deposit (least significant felt) for verification in fuzz tests.
+#! Inputs: [prefix, suffix]
+pub proc get_user_deposit#(prefix: felt, suffix: felt) -> felt
+    exec.get_user_deposit_key
+    push.USER_DEPOSITS_MAPPING_SLOT[0..2] exec.active_account::get_map_item
+    drop drop drop
+    exec.sys::truncate_stack
 end
 
 @locals(2)
@@ -182,7 +193,6 @@ proc mint#(amount: felt, beneficiary_prefix: felt, beneficiary_suffix: felt)
     push.USER_DEPOSITS_MAPPING_SLOT[0..2]
     # => [slot_id_prefix, slot_id_suffix, USER_DEPOSIT_KEY, AMOUNT]
     exec.storage_utils::add_to_map_item
-    drop
     ### updating total supply
     loc_load.0 push.TOTAL_SUPPLY_SLOT[0..2] exec.storage_utils::add_to_storage_item 
     drop

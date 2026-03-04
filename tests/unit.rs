@@ -2,9 +2,9 @@ mod test_utils;
 
 use anyhow::Result;
 use c_prod_pool::pool_ops::{
-    build_lp_local_deposit_note, compile_custom_tx_script, compile_storage_fuzz_tx_script,
-    compute_expected_lp, compute_expected_withdraw, get_lp_local_library, get_math_library,
-    get_pool_library, isqrt,
+    build_lp_local_deposit_note, compile_custom_tx_script, compile_lp_local_fuzz_tx_script,
+    compile_storage_fuzz_tx_script, compute_expected_lp, compute_expected_withdraw,
+    get_lp_local_library, get_math_library, get_pool_library, isqrt,
 };
 use c_prod_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
 use miden_client::{
@@ -17,7 +17,7 @@ use miden_client::{
 use std::{collections::BTreeSet, time::Duration};
 use test_utils::*;
 
-use miden_client::rpc::NodeRpcClient;
+use miden_client::{account::Account, rpc::NodeRpcClient};
 
 #[tokio::test]
 async fn smoke_test() -> Result<()> {
@@ -952,6 +952,233 @@ async fn sub_from_storage_item_underflow_test() -> Result<()> {
         result.unwrap_err()
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn lp_mint_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let iterations: usize = 10;
+    let min_amount: u64 = 1;
+    let max_amount: u64 = 1_000_000;
+
+    let mut setup = setup_lp_local_fuzz_environment().await?;
+    let mut rng = rand::rng();
+
+    let prefix = setup.dummy_account.id().prefix().as_felt();
+    let suffix = setup.dummy_account.id().suffix();
+
+    let mut expected_total_supply: u64 = 0;
+    let mut expected_user_balance: u64 = 0;
+
+    for i in 0..iterations {
+        let amount = rng.random_range(min_amount..=max_amount);
+
+        let source = format!(
+            "use zoro::lp_local\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.{suffix}.{prefix}.{amount}\n\
+                 call.lp_local::mint\n\
+                 push.{suffix}.{prefix}\n\
+                 call.lp_local::get_user_deposit\n\
+                 call.lp_local::total_supply\n\
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let script = compile_lp_local_fuzz_tx_script(&source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.dummy_account.id(),
+                script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        expected_total_supply = expected_total_supply.saturating_add(amount);
+        expected_user_balance = expected_user_balance.saturating_add(amount);
+
+        let total_supply = stack[0].as_int();
+        let user_deposit = stack[1].as_int();
+
+        println!(
+            "[{}/{}] mint amount={} => total_supply={}, user_deposit={} (expected {} {})",
+            i + 1,
+            iterations,
+            amount,
+            total_supply,
+            user_deposit,
+            expected_total_supply,
+            expected_user_balance,
+        );
+
+        let tx_request = TransactionRequestBuilder::new()
+            .custom_script(script)
+            .build()?;
+        setup
+            .clients
+            .client
+            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .await?;
+        setup.clients.client.sync_state().await?;
+
+        assert_eq!(
+            total_supply,
+            expected_total_supply as u64,
+            "total_supply mismatch at iteration {}",
+            i + 1
+        );
+        assert_eq!(
+            user_deposit,
+            expected_user_balance as u64,
+            "user_deposit mismatch at iteration {}",
+            i + 1
+        );
+    }
+
+    println!("All lp_mint fuzz iterations passed.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn lp_burn_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let iterations: usize = 10;
+    let min_burn: u64 = 1;
+    let max_burn: u64 = 100_000;
+    let initial_mint: u64 = 1_000_000_000;
+
+    let mut setup = setup_lp_local_fuzz_environment().await?;
+    let mut rng = rand::rng();
+
+    let prefix = setup.dummy_account.id().prefix().as_felt();
+    let suffix = setup.dummy_account.id().suffix();
+
+    // Initial mint
+    let mint_source = format!(
+        "use zoro::lp_local\n\
+         use miden::core::sys\n\
+         begin\n\
+             push.{suffix}.{prefix}.{initial_mint}\n\
+             call.lp_local::mint\n\
+             exec.sys::truncate_stack\n\
+         end"
+    );
+    let mint_script = compile_lp_local_fuzz_tx_script(&mint_source)?;
+    let tx_request = TransactionRequestBuilder::new()
+        .custom_script(mint_script)
+        .build()?;
+    setup
+        .clients
+        .client
+        .submit_new_transaction(setup.dummy_account.id(), tx_request)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    let acc_after = setup
+        .clients
+        .client
+        .get_account(setup.dummy_account.id().clone())
+        .await?
+        .unwrap();
+    let acc_after = match acc_after.account_data() {
+        AccountRecordData::Full(account) => account,
+        AccountRecordData::Partial(_) => return Err(anyhow::anyhow!("Account not found")),
+    };
+
+    let acc_after_storage = acc_after.storage();
+    let usr_key = Word::new([Felt::new(0), Felt::new(0), suffix, prefix]);
+    let usr_depo = acc_after_storage
+        .get_map_item(&slot_name("zoro::lp_local::user_deposits_mapping"), usr_key)?;
+    println!("usr_depo: after mint {:?}", usr_depo);
+
+    let mut expected_total_supply: u64 = initial_mint;
+    let mut expected_user_balance: u64 = initial_mint;
+
+    for i in 0..iterations {
+        if expected_user_balance == 0 {
+            break;
+        }
+        let burn_amount = rng.random_range(min_burn..=max_burn.min(expected_user_balance));
+        if burn_amount == 0 {
+            continue;
+        }
+
+        let source = format!(
+            "use zoro::lp_local\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.{suffix}.{prefix}.{burn_amount}\n\
+                 call.lp_local::burn\n\
+                 push.{suffix}.{prefix}\n\
+                 call.lp_local::get_user_deposit\n\
+                 call.lp_local::total_supply\n\
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let script = compile_lp_local_fuzz_tx_script(&source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.dummy_account.id(),
+                script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        expected_total_supply = expected_total_supply.saturating_sub(burn_amount);
+        expected_user_balance = expected_user_balance.saturating_sub(burn_amount);
+
+        let total_supply = stack[0].as_int();
+        let user_deposit = stack[1].as_int();
+
+        println!(
+            "[{}/{}] burn amount={} => total_supply={}, user_deposit={} (expected {} {})",
+            i + 1,
+            iterations,
+            burn_amount,
+            total_supply,
+            user_deposit,
+            expected_total_supply,
+            expected_user_balance,
+        );
+
+        let tx_request = TransactionRequestBuilder::new()
+            .custom_script(script)
+            .build()?;
+        setup
+            .clients
+            .client
+            .submit_new_transaction(setup.dummy_account.id(), tx_request)
+            .await?;
+        setup.clients.client.sync_state().await?;
+
+        assert_eq!(
+            total_supply,
+            expected_total_supply as u64,
+            "total_supply mismatch at iteration {}",
+            i + 1
+        );
+        assert_eq!(
+            user_deposit,
+            expected_user_balance as u64,
+            "user_deposit mismatch at iteration {}",
+            i + 1
+        );
+    }
+
+    println!("All lp_burn fuzz iterations passed.");
     Ok(())
 }
 

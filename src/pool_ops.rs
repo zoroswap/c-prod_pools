@@ -61,6 +61,43 @@ pub fn get_lp_local_library() -> Result<Library> {
         .map_err(|e| anyhow!("Failed to compile lp_local library: {e:?}"))
 }
 
+/// Generates the lp_local fuzz dummy library by reading lp_local.masm and transforming it:
+/// - Makes mint and burn public for fuzz testing
+/// - Adds get_user_deposit helper for verification
+fn generate_lp_local_fuzz_dummy_source() -> Result<String> {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let path: PathBuf = [manifest_dir, "asm", "accounts", "lp_local.masm"]
+        .iter()
+        .collect();
+    let source = fs::read_to_string(&path)?;
+
+    let source = source.replace("proc mint#", "pub proc mint#");
+    let source = source.replace("proc burn#", "pub proc burn#");
+
+    Ok(source)
+}
+
+/// Compiles the lp_local fuzz dummy library (generated from lp_local.masm with public mint/burn).
+pub fn get_lp_local_fuzz_dummy_library() -> Result<Library> {
+    let math_library = get_math_library()?;
+    let storage_utils_library = get_storage_utils_library()?;
+    let source = generate_lp_local_fuzz_dummy_source()?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(math_library)
+        .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
+        .with_static_library(storage_utils_library)
+        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?;
+    create_library(assembler, "zoro::lp_local", &source)
+        .map_err(|e| anyhow!("Failed to compile lp_local_fuzz_dummy library: {e:?}"))
+}
+
+/// Compiles a transaction script for lp_local mint/burn fuzz tests.
+pub fn compile_lp_local_fuzz_tx_script(source: &str) -> Result<TransactionScript> {
+    let lp_local_fuzz_dummy_library = get_lp_local_fuzz_dummy_library()?;
+    compile_custom_tx_script(&lp_local_fuzz_dummy_library, source)
+}
+
 /// Compiles the storage_utils MASM library (add_to_storage_item, add_to_map_item, set_map_item).
 /// Depends on the math library.
 pub fn get_storage_utils_library() -> Result<Library> {

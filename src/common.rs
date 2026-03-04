@@ -33,7 +33,10 @@ use tracing::{debug, info, warn};
 
 use serde::{Deserialize, Serialize};
 
-use crate::pool_ops::{get_lp_local_library, get_math_library, get_storage_utils_library};
+use crate::pool_ops::{
+    get_lp_local_fuzz_dummy_library, get_lp_local_library, get_math_library,
+    get_storage_utils_library,
+};
 use crate::utils::{
     create_library, extract_full_account, fetch_vault_for_account_from_chain, slot_name,
 };
@@ -259,6 +262,59 @@ pub async fn deploy_lp_local_pool(
     Ok((lp_local_contract, key_pair))
 }
 
+/// Deploys an lp_local fuzz dummy account (generated from lp_local.masm with public mint/burn).
+///
+/// Storage slots (must match generated lp_local_fuzz_dummy):
+///   - `reserve`: [0, 0, 0, 0]
+///   - `total_supply`: [0, 0, 0, 0]
+///   - `user_deposits_mapping`: empty map
+pub async fn deploy_lp_local_fuzz_dummy(
+    client: &mut MidenClient,
+    keystore: FilesystemKeyStore,
+) -> Result<(Account, AuthSecretKey), ClientError> {
+    let lp_local_fuzz_dummy_library = get_lp_local_fuzz_dummy_library()
+        .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
+
+    let reserve_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
+    let total_supply_slot =
+        StorageSlot::with_empty_value(slot_name("zoro::lp_local::total_supply"));
+    let mut user_deposits_mapping = StorageMap::new();
+    user_deposits_mapping.insert(
+        Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(1)]),
+        Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(1)]),
+    )?;
+    let user_deposits_slot = StorageSlot::with_map(
+        slot_name("zoro::lp_local::user_deposits_mapping"),
+        user_deposits_mapping,
+    );
+
+    let component = AccountComponent::new(
+        lp_local_fuzz_dummy_library,
+        vec![reserve_slot, total_supply_slot, user_deposits_slot],
+    )
+    .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
+    .with_supports_all_types();
+
+    let mut init_seed = [0_u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+    let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
+
+    let contract = AccountBuilder::new(init_seed)
+        .account_type(AccountType::RegularAccountUpdatableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(component)
+        .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
+        .with_component(BasicWallet)
+        .build()?;
+
+    keystore.add_key(&key_pair).unwrap();
+    client.add_account(&contract.clone(), false).await?;
+    client.sync_state().await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    Ok((contract, key_pair))
+}
+
 /// Deploys a dummy account for storage_utils fuzz tests.
 ///
 /// Storage slots (must match constants in storage_fuzz_dummy.masm):
@@ -312,9 +368,24 @@ pub async fn deploy_storage_fuzz_dummy(
         slot_name("zoro::storage_fuzz_dummy::map_slot"),
         mapping_instance,
     );
-    // let map_slot = StorageSlot::with_empty_map(slot_name("zoro::storage_fuzz_dummy::map_slot"));
-    let dummy_component =
-        AccountComponent::new(dummy_library, vec![value_slot, map_slot])?.with_supports_all_types();
+    let lp_total_supply_slot = StorageSlot::with_value(
+        slot_name("zoro::storage_fuzz_dummy::lp_total_supply"),
+        Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(0)]),
+    );
+    let lp_user_deposits_mapping = StorageSlot::with_empty_map(slot_name(
+        "zoro::storage_fuzz_dummy::lp_user_deposits_mapping",
+    ));
+
+    let dummy_component = AccountComponent::new(
+        dummy_library,
+        vec![
+            value_slot,
+            map_slot,
+            lp_total_supply_slot,
+            lp_user_deposits_mapping,
+        ],
+    )?
+    .with_supports_all_types();
 
     let mut init_seed = [0_u8; 32];
     client.rng().fill_bytes(&mut init_seed);
