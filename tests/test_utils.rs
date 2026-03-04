@@ -86,10 +86,25 @@ fn resolve_endpoint() -> (String, Endpoint) {
     (label, endpoint)
 }
 
+fn maybe_clean_store(base_dir: &PathBuf) {
+    let force_fresh = env::var("CLEAN_TEST").map_or(false, |v| v == "1");
+    if force_fresh {
+        let store_path = base_dir.join("store.sqlite3");
+        if store_path.exists() {
+            println!(
+                "CLEAN_TEST=1 — removing old store at {}",
+                store_path.display()
+            );
+            fs::remove_file(&store_path).ok();
+        }
+    }
+}
+
 async fn init_clients(
     base_dir: &PathBuf,
     endpoint: &Endpoint,
 ) -> Result<(MidenClients, FilesystemKeyStore)> {
+    maybe_clean_store(base_dir);
     let keystore_path = base_dir.join("keystore");
     let store_path = base_dir.join("store.sqlite3");
     let clients = instantiate_simple_client(
@@ -180,18 +195,6 @@ async fn resolve_faucets_and_user(
 ) -> Result<(Vec<Faucet>, Account, bool)> {
     let state_path = base_dir.join("test_state.toml");
     let force_fresh = env::var("CLEAN_TEST").map_or(false, |v| v == "1");
-
-    if force_fresh {
-        let store_path = base_dir.join("store.sqlite3");
-        if store_path.exists() {
-            println!(
-                "CLEAN_TEST=1 — removing old store at {}",
-                store_path.display()
-            );
-            fs::remove_file(&store_path)?;
-        }
-    }
-
     let mut is_user_fresh = force_fresh;
     let (faucets, user) = if force_fresh {
         println!("CLEAN_TEST=1 — deploying fresh faucets and user.");
@@ -288,7 +291,7 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
 
     if is_user_fresh {
         println!("Funding user wallet...");
-        setup.maybe_fund_user_wallet(DEFAULT_FUND_AMOUNT).await?;
+        setup.fund_user_wallet(DEFAULT_FUND_AMOUNT).await?;
     }
 
     Ok(setup)
@@ -376,7 +379,7 @@ pub async fn setup_lp_local_test_environment() -> Result<TestSetup> {
     };
 
     if is_user_fresh {
-        setup.maybe_fund_user_wallet(DEFAULT_FUND_AMOUNT).await?;
+        setup.fund_user_wallet(DEFAULT_FUND_AMOUNT).await?;
     }
 
     Ok(setup)
