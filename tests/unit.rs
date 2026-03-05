@@ -1532,7 +1532,7 @@ async fn lp_withdraw_happy_path_test() -> Result<()> {
         expected_amount0_out, expected_amount1_out
     );
 
-    // withdraw currently only runs simulate_withdraw (burn/create_note commented out),
+    // withdraw curuser_keyrently only runs simulate_withdraw (burn/create_note commented out),
     // so state should remain unchanged
     assert_eq!(
         ts_after,
@@ -1550,7 +1550,7 @@ async fn lp_withdraw_happy_path_test() -> Result<()> {
         "reserve1 should decrease by expected_amount1_out"
     );
 
-    let user_key_after = Word::new([
+    let user_key = Word::new([
         Felt::new(0),
         Felt::new(0),
         setup.user.id().suffix(),
@@ -1558,22 +1558,16 @@ async fn lp_withdraw_happy_path_test() -> Result<()> {
     ]);
     let user_deposit_after = storage_after_withdraw.get_map_item(
         &slot_name("zoro::lp_local::user_deposits_mapping"),
-        user_key_after,
+        user_key,
     )?;
     println!(
         "User deposit after withdraw: {}",
         user_deposit_after[0].as_int()
     );
 
-    let user_key_before = Word::new([
-        Felt::new(0),
-        Felt::new(0),
-        setup.user.id().suffix(),
-        setup.user.id().prefix().into(),
-    ]);
     let user_deposit_before = storage_after_deposit.get_map_item(
         &slot_name("zoro::lp_local::user_deposits_mapping"),
-        user_key_before,
+        user_key,
     )?;
     assert_eq!(
         user_deposit_after[0].as_int(),
