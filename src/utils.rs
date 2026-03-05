@@ -24,6 +24,7 @@ pub fn create_library(
     library_path: &str,
     source_code: &str,
 ) -> Result<miden_client::assembly::Library, Box<dyn std::error::Error>> {
+    println!("creating library: {:?}", library_path);
     let source_manager = Arc::new(DefaultSourceManager::default());
     // println!("parsing library: {:?}", library_path);
     let module = Module::parser(ModuleKind::Library).parse_str(
@@ -31,7 +32,6 @@ pub fn create_library(
         source_code,
         source_manager.clone(),
     )?;
-    // println!("Module: {:?}", module);
     let library = assembler.clone().assemble_library([module])?;
     Ok(library)
 }

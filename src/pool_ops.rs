@@ -240,6 +240,97 @@ pub fn build_lp_local_deposit_note(
     Ok(Note::new(assets, metadata, recipient))
 }
 
+/// Compiles the lp_local withdraw note script.
+/// The script reads note inputs and calls lp_local::withdraw with
+/// [LP_AMOUNT_WORD, user_id_prefix, user_id_suffix, note_tag, note_type, RECIPIENT_WORD].
+pub fn compile_lp_local_withdraw_note_script(lp_local_library: &Library) -> Result<NoteScript> {
+    let source = r#"use miden::protocol::active_note
+use zoro::lp_local
+use miden::core::sys
+begin
+    exec.active_note::get_inputs
+    # => [num_inputs, dest_ptr]
+    drop drop
+
+    # note_inputs layout (dest_ptr = 0):
+    #   mem[0] = [lp_amount, 0, 0, 0]           (word 0)
+    #   mem[4] = [note_tag, note_type, 0, 0]     (word 1)
+    #   mem[8] = [r0, r1, r2, r3]                (word 2 - recipient digest)
+
+    # Push recipient word (word 2)
+    padw mem_loadw_be.8
+    # => [RECIPIENT_WORD]
+
+    # Push note_type, note_tag
+    mem_load.5 mem_load.4
+    # => [note_tag, note_type, RECIPIENT_WORD]
+
+    # Push user_id (sender)
+    exec.active_note::get_sender
+    # => [sender_prefix, sender_suffix, note_tag, note_type, RECIPIENT_WORD]
+
+    # Push LP_AMOUNT as a word [0, 0, 0, lp_amount]
+    padw mem_loadw_le.0
+    # => [LP_AMOUNT_WORD, sender_prefix, sender_suffix, note_tag, note_type, RECIPIENT_WORD]
+
+    call.lp_local::withdraw
+    exec.sys::truncate_stack
+end"#;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(lp_local_library.clone())
+        .map_err(|e| anyhow!("Failed to add lp_local library to assembler: {e:?}"))?;
+    let program = assembler
+        .assemble_program(source)
+        .map_err(|e| anyhow!("Failed to compile lp_local withdraw note script: {e:?}"))?;
+    Ok(NoteScript::new(program))
+}
+
+/// Builds a withdraw note targeting the lp_local pool.
+/// Note inputs: [lp_amount, 0, 0, 0,  note_tag, note_type, 0, 0,  r0, r1, r2, r3].
+pub fn build_lp_local_withdraw_note(
+    pool_id: AccountId,
+    lp_local_library: &Library,
+    lp_amount: u64,
+    sender: AccountId,
+    return_note_tag: Felt,
+    return_note_type: Felt,
+    return_recipient_digest: Word,
+) -> Result<Note> {
+    let script = compile_lp_local_withdraw_note_script(lp_local_library)?;
+
+    let inputs = NoteInputs::new(vec![
+        Felt::ZERO,
+        Felt::ZERO,
+        Felt::ZERO,
+        Felt::new(lp_amount),
+        return_note_tag,
+        return_note_type,
+        Felt::ZERO,
+        Felt::ZERO,
+        return_recipient_digest[0],
+        return_recipient_digest[1],
+        return_recipient_digest[2],
+        return_recipient_digest[3],
+    ])?;
+
+    let assets = NoteAssets::new(vec![])?;
+
+    let tag = NoteTag::with_account_target(pool_id);
+    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
+
+    let mut seed = [0; 32];
+    let mut std_rng = StdRng::from_os_rng();
+    std_rng.fill(&mut seed);
+    let mut rng = StdRng::from_seed(seed);
+    let mut seed = [0u8; 32];
+    rng.fill(&mut seed);
+    let serial_num = Word::from_random_bytes(&seed)
+        .ok_or(anyhow!("Error generating new word, no word was produced"))?;
+    let recipient = NoteRecipient::new(serial_num, script, inputs);
+    Ok(Note::new(assets, metadata, recipient))
+}
+
 /// Compiles a note script that calls the given pool procedure via `call`.
 pub fn compile_pool_note_script(
     pool_library: &Library,

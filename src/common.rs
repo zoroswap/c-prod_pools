@@ -212,8 +212,19 @@ pub async fn deploy_lp_local_pool(
     let lp_local_library = get_lp_local_library()
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
 
+    let mut assets_mapping = StorageMap::new();
+    assets_mapping.insert(
+        Word::default(),
+        [
+            token1_id.suffix(),
+            token1_id.prefix().as_felt(),
+            token0_id.suffix(),
+            token0_id.prefix().as_felt(),
+        ]
+        .into(),
+    )?;
     let assets_mapping_slot =
-        StorageSlot::with_empty_map(slot_name("zoro::lp_local::assets_mapping"));
+        StorageSlot::with_map(slot_name("zoro::lp_local::assets_mapping"), assets_mapping);
     let reserve_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
     let total_supply_slot =
         StorageSlot::with_empty_value(slot_name("zoro::lp_local::total_supply"));

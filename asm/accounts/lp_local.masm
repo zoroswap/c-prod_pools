@@ -22,7 +22,6 @@ const NOTE_TYPE = 25
 
 const NOTE_RECIPIENT_WORD = 28
 
-
 ### ERROR CODES
 const ERR_ZERO_ADDRESS = "Zero address"
 
@@ -284,10 +283,11 @@ end
 #! Inputs: [LP_AMOUNT user_id_prefix, user_id_suffix]
 #! Outputs: [amount_0_out, amount_1_out]
 #!
-@locals(4)
-pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, note_tag: felt, note_type: felt, return_note_recipient: word)
+@locals(6)
+pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, note_tag: felt, note_type: felt, return_note_recipient: word) -> (felt, felt)
     # loc.0: LP_AMOUNT  = EMPTY, EMPTY, EMPTY, LP_AMOUNT loc.3 lp_amount
-
+    # loc.4: amount_0_out
+    # loc.5: amount_1_out
     ## LP_AMOUNT to local
     loc_storew_le.0 dropw 
     ## user, note tag and type tomemory
@@ -301,13 +301,28 @@ pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, n
     loc_load.3
     # => [lp_amount, reserve_0, reserve_1]
     exec.total_supply
-    # => [total_supply, lp_amount, reserve_0, reserve_1]
+    ## => [total_supply, lp_amount, reserve_0, reserve_1]
     exec.simulate_withdraw
-    # => [amount_0_out, amount_1_out]
-    # => [RECIPIENT, amount_0_out, amount_1_out]
-    #exec.create_withdraw_return_note
-    # => [note_id]
+    ## => [amount_0_out, amount_1_out]
+    loc_store.4 loc_store.5
+    loc_load.5 loc_load.4
+    ## => [amount_0_out, amount_1_out]
+    exec.create_withdraw_return_note
+    ## => [note_id] 
+    drop
+
+    #### burn: updates user_deposits_mapping and total_supply
+    mem_load.USER_ACCOUNT_ID_SUFFIX mem_load.USER_ACCOUNT_ID_PREFIX loc_load.3
+    ## => [lp_amount, user_id_prefix, user_id_suffix]
+    exec.burn
+    #
+    loc_load.5 loc_load.4
+    ## => [amount_0_out, amount_1_out]
+    exec.sub_from_reserve
+    # => []
+    loc_load.5 loc_load.4
     exec.sys::truncate_stack
+
 end
 
 
@@ -342,12 +357,14 @@ proc mem_get_recipient() -> word
     exec.sys::truncate_stack
 end
 
-@locals(3)
+@locals(8)
 proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     # loc.0: amount_0_out
     # loc.1: amount_1_out
     # loc.2: note_id
-
+    # loc.3: asset_0_id_prefix
+    # loc.4: asset_0_id_suffix
+ 
     loc_store.0 loc_store.1
     padw mem_loadw_le.NOTE_RECIPIENT_WORD  mem_load.NOTE_TYPE mem_load.NOTE_TAG
     exec.output_note::create
@@ -375,8 +392,10 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     loc_load.2 movdn.4
     # => [ASSET0_OUT, note_id]
     exec.output_note::add_asset
+    
     # => []
 end
+
 
 #    # => [amount_0_out, amount_1_out]
 #    loc_store.5 loc_store.6

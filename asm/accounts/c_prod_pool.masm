@@ -14,7 +14,6 @@ const RESERVE_SLOT = word("zoro::c_prod_pool::reserve")
 const CONFIG_SLOT = word("zoro::c_prod_pool::config")
 const LP_SHARES_SLOT = word("zoro::c_prod_pool::lp_shares")
 
-const MINIMUM_LIQUIDITY = 1000
 
 const ERR_INSUFFICIENT_LP_MINTED = "Insufficient LP minted"
 const ERR_SQRT_VERIFY_FAIL = "Sqrt verify fail"

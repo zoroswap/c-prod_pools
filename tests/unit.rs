@@ -11,9 +11,12 @@ use miden_client::{
     Felt, Word,
     account::StorageSlotName,
     asset::FungibleAsset,
+    note::{NoteTag, NoteType, build_p2id_recipient},
     store::{AccountRecord, AccountRecordData},
     transaction::{AdviceInputs, OutputNote, TransactionRequestBuilder},
 };
+use miden_protocol::crypto::rand::Randomizable;
+
 use std::{collections::BTreeSet, time::Duration};
 use test_utils::*;
 
@@ -1371,6 +1374,214 @@ async fn deposit_initial_underflow_test() -> Result<()> {
         "deposit_initial_underflow_test: correctly failed with {:?}",
         result.unwrap_err()
     );
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn lp_withdraw_happy_path_test() -> Result<()> {
+    use c_prod_pool::pool_ops::{build_lp_local_withdraw_note, compute_expected_withdraw};
+
+    let deposit_amount: u64 = 10_000_000;
+    let withdraw_amount: u64 = 1_000_000;
+
+    let mut setup = setup_lp_local_test_environment().await?;
+    setup.maybe_fund_user_wallet(deposit_amount).await?;
+
+    let lp_lib = get_lp_local_library()?;
+    let token0_id = setup.faucets[0].faucet.id();
+    let token1_id = setup.faucets[1].faucet.id();
+    let token0_asset = FungibleAsset::new(token0_id.clone(), deposit_amount)?;
+    let token1_asset = FungibleAsset::new(token1_id.clone(), deposit_amount)?;
+
+    // ── Step 1: Deposit to seed the pool with reserves and LP supply ──
+    let deposit_note = build_lp_local_deposit_note(
+        setup.contract.id(),
+        &lp_lib,
+        token0_asset,
+        token1_asset,
+        setup.user.id(),
+        setup.user.id(),
+    )?;
+
+    let pool_tag = NoteTag::with_account_target(setup.contract.id());
+    setup.clients.client.add_note_tag(pool_tag).await?;
+
+    let create_req = TransactionRequestBuilder::new()
+        .own_output_notes([OutputNote::Full(deposit_note.clone())])
+        .build()?;
+    let _tx_id = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.user.id(), create_req)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    let consume_req = TransactionRequestBuilder::new()
+        .input_notes([(deposit_note.clone(), None)])
+        .build()?;
+    let _consume_id = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.contract.id(), consume_req)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    // ── Read storage after deposit ──
+    let acc_after_deposit = setup
+        .clients
+        .client
+        .get_account(setup.contract.id().clone())
+        .await?
+        .unwrap();
+    let acc_after_deposit = match acc_after_deposit.account_data() {
+        AccountRecordData::Full(account) => account,
+        AccountRecordData::Partial(_) => return Err(anyhow::anyhow!("Account not found")),
+    };
+    let storage_after_deposit = acc_after_deposit.storage();
+    let total_supply_after_deposit =
+        storage_after_deposit.get_item(&slot_name("zoro::lp_local::total_supply"))?;
+    let reserve_after_deposit =
+        storage_after_deposit.get_item(&slot_name("zoro::lp_local::reserve"))?;
+    let vault_after_deposit = acc_after_deposit.vault();
+    println!(
+        "after deposit token0 balance={}, token1 balance={}",
+        vault_after_deposit.get_balance(token0_id)?,
+        vault_after_deposit.get_balance(token1_id)?
+    );
+
+    let ts = total_supply_after_deposit[0].as_int();
+    let r0 = reserve_after_deposit[0].as_int();
+    let r1 = reserve_after_deposit[1].as_int();
+    println!(
+        "After deposit: total_supply={}, reserve0={}, reserve1={}",
+        ts, r0, r1
+    );
+    assert!(ts > 0, "total supply should be > 0 after deposit");
+    assert!(r0 > 0, "reserve0 should be > 0 after deposit");
+    assert!(r1 > 0, "reserve1 should be > 0 after deposit");
+
+    // ── Step 2: Build and submit the withdraw note ──
+    // Return note params are placeholders; withdraw currently doesn't create the output note.
+    let return_note_tag = NoteTag::with_account_target(setup.user.id());
+    let return_note_type = NoteType::Public;
+    let return_note_serial_num = Word::from_random_bytes(&[0; 32]).unwrap();
+    let return_note_recipient =
+        build_p2id_recipient(setup.user.id(), return_note_serial_num).unwrap();
+    let withdraw_note = build_lp_local_withdraw_note(
+        setup.contract.id(),
+        &lp_lib,
+        withdraw_amount,
+        setup.user.id(),
+        return_note_tag.into(),
+        return_note_type.into(),
+        return_note_recipient.digest(),
+    )?;
+
+    let create_req = TransactionRequestBuilder::new()
+        .own_output_notes([OutputNote::Full(withdraw_note.clone())])
+        .build()?;
+    let _tx_id = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.user.id(), create_req)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    let consume_req = TransactionRequestBuilder::new()
+        .input_notes([(withdraw_note.clone(), None)])
+        .expected_output_recipients(vec![return_note_recipient])
+        .build()?;
+    let _consume_id = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.contract.id(), consume_req)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    // ── Read storage after withdraw ──
+    let acc_after_withdraw = setup
+        .clients
+        .client
+        .get_account(setup.contract.id().clone())
+        .await?
+        .unwrap();
+    let acc_after_withdraw = match acc_after_withdraw.account_data() {
+        AccountRecordData::Full(account) => account,
+        AccountRecordData::Partial(_) => return Err(anyhow::anyhow!("Account not found")),
+    };
+    let storage_after_withdraw = acc_after_withdraw.storage();
+    let total_supply_after_withdraw =
+        storage_after_withdraw.get_item(&slot_name("zoro::lp_local::total_supply"))?;
+    let reserve_after_withdraw =
+        storage_after_withdraw.get_item(&slot_name("zoro::lp_local::reserve"))?;
+
+    let ts_after = total_supply_after_withdraw[0].as_int();
+    let r0_after = reserve_after_withdraw[0].as_int();
+    let r1_after = reserve_after_withdraw[1].as_int();
+
+    let (expected_amount0_out, expected_amount1_out) =
+        compute_expected_withdraw(ts, withdraw_amount, r0, r1);
+
+    println!(
+        "After withdraw: total_supply={}, reserve0={}, reserve1={}",
+        ts_after, r0_after, r1_after
+    );
+    println!(
+        "Expected withdraw outputs: amount0={}, amount1={}",
+        expected_amount0_out, expected_amount1_out
+    );
+
+    // withdraw currently only runs simulate_withdraw (burn/create_note commented out),
+    // so state should remain unchanged
+    assert_eq!(
+        ts_after,
+        ts - withdraw_amount,
+        "total supply should decrease by withdraw_amount"
+    );
+    assert_eq!(
+        r0_after,
+        r0 - expected_amount0_out,
+        "reserve0 should decrease by expected_amount0_out"
+    );
+    assert_eq!(
+        r1_after,
+        r1 - expected_amount1_out,
+        "reserve1 should decrease by expected_amount1_out"
+    );
+
+    let user_key_after = Word::new([
+        Felt::new(0),
+        Felt::new(0),
+        setup.user.id().suffix(),
+        setup.user.id().prefix().into(),
+    ]);
+    let user_deposit_after = storage_after_withdraw.get_map_item(
+        &slot_name("zoro::lp_local::user_deposits_mapping"),
+        user_key_after,
+    )?;
+    println!(
+        "User deposit after withdraw: {}",
+        user_deposit_after[0].as_int()
+    );
+
+    let user_key_before = Word::new([
+        Felt::new(0),
+        Felt::new(0),
+        setup.user.id().suffix(),
+        setup.user.id().prefix().into(),
+    ]);
+    let user_deposit_before = storage_after_deposit.get_map_item(
+        &slot_name("zoro::lp_local::user_deposits_mapping"),
+        user_key_before,
+    )?;
+    assert_eq!(
+        user_deposit_after[0].as_int(),
+        user_deposit_before[0].as_int() - withdraw_amount,
+        "user deposit should decrease by withdraw_amount"
+    );
+
+    println!("lp_withdraw_happy_path_test finished successfully");
     tokio::time::sleep(Duration::from_secs(1)).await;
     Ok(())
 }
