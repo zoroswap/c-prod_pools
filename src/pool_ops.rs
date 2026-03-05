@@ -1,4 +1,4 @@
-use crate::utils::create_library;
+use crate::utils::{create_library, read_masm_to_string};
 use anyhow::{Result, anyhow};
 use miden_client::{
     Felt, Word,
@@ -19,11 +19,7 @@ use std::{fs, path::PathBuf};
 
 /// Compiles the pool MASM library from source.
 pub fn get_pool_library() -> Result<Library> {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path: PathBuf = [manifest_dir, "asm", "accounts", "c_prod_pool.masm"]
-        .iter()
-        .collect();
-    let source = fs::read_to_string(&path)?;
+    let source = read_masm_to_string("accounts", "c_prod_pool")?;
     let assembler = TransactionKernel::assembler().with_warnings_as_errors(true);
     create_library(assembler, "zoro::c_prod_pool", &source)
         .map_err(|e| anyhow!("Failed to compile pool library: {e:?}"))
@@ -31,11 +27,7 @@ pub fn get_pool_library() -> Result<Library> {
 
 /// Compiles the math MASM library (sqrt, safe_sub, safe_cast_u64_into_felt, etc.).
 pub fn get_math_library() -> Result<Library> {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path: PathBuf = [manifest_dir, "asm", "accounts", "math.masm"]
-        .iter()
-        .collect();
-    let source = fs::read_to_string(&path)?;
+    let source = read_masm_to_string("accounts", "math")?;
     let assembler = TransactionKernel::assembler().with_warnings_as_errors(true);
     create_library(assembler, "zoro::math", &source)
         .map_err(|e| anyhow!("Failed to compile math library: {e:?}"))
@@ -46,11 +38,8 @@ pub fn get_math_library() -> Result<Library> {
 pub fn get_lp_local_library() -> Result<Library> {
     let math_library = get_math_library()?;
     let storage_utils_library = get_storage_utils_library()?;
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path: PathBuf = [manifest_dir, "asm", "accounts", "lp_local.masm"]
-        .iter()
-        .collect();
-    let source = fs::read_to_string(&path)?;
+
+    let source = read_masm_to_string("accounts", "lp_local")?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(math_library)
@@ -65,11 +54,7 @@ pub fn get_lp_local_library() -> Result<Library> {
 /// - Makes mint and burn public for fuzz testing
 /// - Adds get_user_deposit helper for verification
 fn generate_lp_local_fuzz_dummy_source() -> Result<String> {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path: PathBuf = [manifest_dir, "asm", "accounts", "lp_local.masm"]
-        .iter()
-        .collect();
-    let source = fs::read_to_string(&path)?;
+    let source = read_masm_to_string("accounts", "lp_local")?;
 
     let source = source.replace("proc mint#", "pub proc mint#");
     let source = source.replace("proc burn#", "pub proc burn#");
@@ -102,11 +87,7 @@ pub fn compile_lp_local_fuzz_tx_script(source: &str) -> Result<TransactionScript
 /// Depends on the math library.
 pub fn get_storage_utils_library() -> Result<Library> {
     let math_library = get_math_library()?;
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path: PathBuf = [manifest_dir, "asm", "accounts", "storage_utils.masm"]
-        .iter()
-        .collect();
-    let source = fs::read_to_string(&path)?;
+    let source = read_masm_to_string("accounts", "storage_utils")?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(math_library)
@@ -118,11 +99,7 @@ pub fn get_storage_utils_library() -> Result<Library> {
 /// Compiles the storage_fuzz_dummy MASM library (minimal dummy with slot constants).
 pub fn get_storage_fuzz_dummy_library() -> Result<Library> {
     let storage_utils_library = get_storage_utils_library()?;
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path: PathBuf = [manifest_dir, "asm", "accounts", "storage_fuzz_dummy.masm"]
-        .iter()
-        .collect();
-    let source = fs::read_to_string(&path)?;
+    let source = read_masm_to_string("accounts", "storage_fuzz_dummy")?;
 
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
@@ -174,25 +151,9 @@ pub fn compile_pool_tx_script(
 /// Compiles the lp_local deposit note script.
 /// The script loads assets and user_id from the note via active_note::get_assets/get_inputs,
 /// then calls lp_local::deposit with [ASSET0, ASSET1, user_id_prefix, user_id_suffix].
-pub fn compile_lp_local_note_script(lp_local_library: &Library) -> Result<NoteScript> {
-    let source = r#"use miden::protocol::active_note
-use zoro::lp_local
-use miden::core::sys
-begin
-    # Load assets from note (dest_ptr=0)
-    push.0 exec.active_note::get_assets
-    # => [num_assets, 0]
-    swap drop
-    # => [num_assets]
-    push.2 eq assert
-    # => []
-    exec.active_note::get_sender
-    # => [sender_prefix, sender_suffix]
-    padw mem_loadw_be.0 padw mem_loadw_be.4
-    # => [ASSET0, ASSET1, sender_prefix, sender_suffix ]
-    call.lp_local::deposit
-    exec.sys::truncate_stack
-end"#;
+pub fn compile_lp_local_deposit_note_script(lp_local_library: &Library) -> Result<NoteScript> {
+    let source = read_masm_to_string("notes", "xyk_deposit")
+        .map_err(|e| anyhow!("Failed to read xyk_deposit note script: {e:?}"))?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(lp_local_library.clone())
@@ -213,7 +174,7 @@ pub fn build_lp_local_deposit_note(
     user_id: AccountId,
     sender: AccountId,
 ) -> Result<Note> {
-    let script = compile_lp_local_note_script(lp_local_library)?;
+    let script = compile_lp_local_deposit_note_script(lp_local_library)?;
 
     let inputs = NoteInputs::new(vec![
         user_id.prefix().as_felt().into(),
@@ -244,38 +205,8 @@ pub fn build_lp_local_deposit_note(
 /// The script reads note inputs and calls lp_local::withdraw with
 /// [LP_AMOUNT_WORD, user_id_prefix, user_id_suffix, note_tag, note_type, RECIPIENT_WORD].
 pub fn compile_lp_local_withdraw_note_script(lp_local_library: &Library) -> Result<NoteScript> {
-    let source = r#"use miden::protocol::active_note
-use zoro::lp_local
-use miden::core::sys
-begin
-    exec.active_note::get_inputs
-    # => [num_inputs, dest_ptr]
-    drop drop
-
-    # note_inputs layout (dest_ptr = 0):
-    #   mem[0] = [lp_amount, 0, 0, 0]           (word 0)
-    #   mem[4] = [note_tag, note_type, 0, 0]     (word 1)
-    #   mem[8] = [r0, r1, r2, r3]                (word 2 - recipient digest)
-
-    # Push recipient word (word 2)
-    padw mem_loadw_be.8
-    # => [RECIPIENT_WORD]
-
-    # Push note_type, note_tag
-    mem_load.5 mem_load.4
-    # => [note_tag, note_type, RECIPIENT_WORD]
-
-    # Push user_id (sender)
-    exec.active_note::get_sender
-    # => [sender_prefix, sender_suffix, note_tag, note_type, RECIPIENT_WORD]
-
-    # Push LP_AMOUNT as a word [0, 0, 0, lp_amount]
-    padw mem_loadw_le.0
-    # => [LP_AMOUNT_WORD, sender_prefix, sender_suffix, note_tag, note_type, RECIPIENT_WORD]
-
-    call.lp_local::withdraw
-    exec.sys::truncate_stack
-end"#;
+    let source = read_masm_to_string("notes", "xyk_withdraw")
+        .map_err(|e| anyhow!("Failed to read xyk_withdraw note script: {e:?}"))?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(lp_local_library.clone())
@@ -538,7 +469,7 @@ mod tests {
     // #[test]
     fn test_lp_local_deposit_note_script_compiles() {
         let lp_lib = get_lp_local_library().expect("lp_local library");
-        let result = compile_lp_local_note_script(&lp_lib);
+        let result = compile_lp_local_deposit_note_script(&lp_lib);
         assert!(
             result.is_ok(),
             "lp_local deposit note script: {:?}",

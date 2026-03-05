@@ -1379,7 +1379,7 @@ async fn deposit_initial_underflow_test() -> Result<()> {
 }
 
 #[tokio::test]
-async fn lp_withdraw_happy_path_test() -> Result<()> {
+async fn lp_deposit_withdraw_happy_path_test() -> Result<()> {
     use c_prod_pool::pool_ops::{build_lp_local_withdraw_note, compute_expected_withdraw};
 
     let deposit_amount: u64 = 10_000_000;
@@ -1575,7 +1575,7 @@ async fn lp_withdraw_happy_path_test() -> Result<()> {
         "user deposit should decrease by withdraw_amount"
     );
 
-    println!("lp_withdraw_happy_path_test finished successfully");
+    println!("lp_deposit_withdraw_happy_path_test finished successfully");
     tokio::time::sleep(Duration::from_secs(1)).await;
     Ok(())
 }

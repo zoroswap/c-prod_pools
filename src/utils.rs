@@ -1,6 +1,6 @@
 use miden_protocol::account::StorageSlotName;
 
-use std::sync::Arc;
+use std::{fs, path::PathBuf, sync::Arc};
 
 use anyhow::{Result, anyhow};
 use miden_client::assembly::{
@@ -13,6 +13,7 @@ use miden_client::{
     rpc::{GrpcClient, NodeRpcClient, domain::account::FetchedAccount},
     store::AccountRecordData,
 };
+
 use tracing::{debug, info};
 
 pub fn slot_name(name: &str) -> StorageSlotName {
@@ -59,4 +60,12 @@ pub fn extract_full_account(data: &AccountRecordData) -> Result<&Account> {
         AccountRecordData::Full(account) => Ok(account),
         AccountRecordData::Partial(_) => Err(anyhow!("Expected full account data, got partial")),
     }
+}
+
+pub fn read_masm_to_string(kind: &str, name: &str) -> Result<String> {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let path: PathBuf = [manifest_dir, "asm", kind, &format!("{name}.masm")]
+        .iter()
+        .collect();
+    fs::read_to_string(&path).map_err(|e| anyhow!("Failed to read {path:?}: {e}"))
 }
