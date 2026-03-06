@@ -3,6 +3,7 @@ use miden::protocol::native_account
 use miden::protocol::active_account
 use miden::protocol::output_note
 use miden::core::sys
+use miden::protocol::account_id
 
 use zoro::math
 use zoro::storage_utils
@@ -24,6 +25,7 @@ const NOTE_RECIPIENT_WORD = 28
 
 ### ERROR CODES
 const ERR_ZERO_ADDRESS = "Zero address"
+const ERR_UNKNOWN_ASSET = "Unknown asset"
 
 ### STORAGE SLOTS
 const ASSETS_MAPPING_SLOT = word("zoro::lp_local::assets_mapping")
@@ -129,15 +131,20 @@ pub proc total_supply#() -> felt
     exec.sys::truncate_stack
 end
 
-pub proc get_reserve#() -> (felt, felt)
+pub proc get_reserves#() -> (felt, felt)
     push.RESERVE_SLOT[0..2] exec.active_account::get_item
     drop drop
 end
 
-proc set_reserve#(reserve_0: felt, reserve_1: felt)
+pub proc set_reserves#(reserve_0: felt, reserve_1: felt)
     ### amount validation vs vault
     push.0.0push.RESERVE_SLOT[0..2] exec.native_account::set_item
     dropw
+end
+
+pub proc get_pool_asset_ids() -> word
+    push.0.0.0.0 push.ASSETS_MAPPING_SLOT[0..2] exec.active_account::get_map_item
+    exec.sys::truncate_stack
 end
 
 #! Returns user deposit (least significant felt) for verification in fuzz tests.
@@ -149,13 +156,76 @@ pub proc get_user_deposit#(prefix: felt, suffix: felt) -> felt
     exec.sys::truncate_stack
 end
 
+#### PROCEDURES BY ASSET ID ####
 @locals(2)
-proc add_to_reserve#(amount_0: felt, amount_1: felt)
+pub proc get_reserve_by_asset_id(asset_id_prefix: felt, asset_id_suffix: felt) -> felt
+    exec.get_asset_index
+    eq.0
+    if.true # asset 0
+        exec.get_reserves 
+        # => [reserve_0, reserve_1]
+        swap drop
+        # => [reserve_0]
+    else # asset 1
+        exec.get_reserves
+        # => [reserve_0, reserve_1]
+        drop
+        # => [reserve_1]
+    end
+    exec.sys::truncate_stack
+end
+
+
+pub proc is_token_0(asset_id_prefix: felt, asset_id_suffix: felt) -> i1
+    exec.get_pool_asset_ids movup.2 drop movup.2 drop
+    # => [asset_0_id_prefix, asset_0_id_suffix, asset_id_prefix, asset_id_suffix]
+
+    exec.account_id::is_equal
+    # => 
+    exec.sys::truncate_stack
+end
+pub proc is_token_1(asset_id_prefix: felt, asset_id_suffix: felt) -> i1
+    exec.get_pool_asset_ids drop drop
+    # => [asset_1_id_prefix, asset_1_id_suffix,  asset_id_prefix, asset_id_suffix]
+    exec.account_id::is_equal
+    # => 
+    exec.sys::truncate_stack
+end
+
+@locals(2)
+pub proc get_asset_index(asset_id_prefix: felt, asset_id_suffix: felt) -> felt 
+    # loc.0: asset_id_prefix
+    # loc.1: asset_id_suffix
+    loc_store.0 loc_store.1
+    loc_load.1 loc_load.0
+    # => [asset_id_suffix, asset_id_prefix]
+    exec.is_token_0
+    if.true
+        ### index = 0
+        push.0
+        # => [0]
+    else
+        loc_load.1 loc_load.0
+        # => [asset_id_suffix, asset_id_prefix]
+        exec.is_token_1
+        # => [is_one]
+        ### index not found
+        assert.err=ERR_UNKNOWN_ASSET
+        ### index = 1
+        push.1
+        # => [1]
+    end
+    exec.sys::truncate_stack
+end
+
+
+@locals(2)
+pub proc add_to_reserves#(amount_0: felt, amount_1: felt)
     # loc.0: amount_0
     # loc.1: amount_1
     loc_store.0 loc_store.1
     # => []
-    exec.get_reserve
+    exec.get_reserves
     # => [reserve_0, reserve_1]
     loc_load.0 exec.math::safe_add
     # => [new_reserve_0, reserve_1]
@@ -164,16 +234,16 @@ proc add_to_reserve#(amount_0: felt, amount_1: felt)
     # => [new_reserve_1, new_reserve_0]
     swap
     # => [new_reserve_0, new_reserve_1]
-    exec.set_reserve
+    exec.set_reserves
 end
 
 @locals(2)
-proc sub_from_reserve#(amount_0: felt, amount_1: felt)
+proc sub_from_reserves#(amount_0: felt, amount_1: felt)
     # loc.0: amount_0
     # loc.1: amount_1
     loc_store.0 loc_store.1
     # => []
-    exec.get_reserve
+    exec.get_reserves
     # => [reserve_0, reserve_1]
     loc_load.0 exec.math::safe_sub
     # => [new_reserve_0, reserve_1]
@@ -182,9 +252,13 @@ proc sub_from_reserve#(amount_0: felt, amount_1: felt)
     # => [new_reserve_1, new_reserve_0]
     swap
     # => [new_reserve_0, new_reserve_1]
-    exec.set_reserve
+    exec.set_reserves
 end
-    
+
+pub proc add_to_reserve_by_asset_id#(amount: felt, asset_id_prefix: felt, asset_id_suffix: felt)
+end
+proc sub_from_reserve_by_asset_id#(amount: felt, asset_id_prefix: felt, asset_id_suffix: felt)
+end
 
 @locals(3)
 proc mint#(amount: felt, beneficiary_prefix: felt, beneficiary_suffix: felt)
@@ -241,7 +315,7 @@ pub proc deposit
     # loc.8: lp_amount_out
     loc_storew_le.0 dropw loc_storew_le.4 dropw mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
     ### get_lp_amount_out (total_supply: felt, amount_0: felt, amount_1: felt, reserve_0: felt, reserve_1: felt)
-    exec.get_reserve
+    exec.get_reserves
     # => [reserve_0, reserve_1]
     loc_load.7 loc_load.3
     # => [amount_0, amount_1, reserve_0, reserve_1]
@@ -273,7 +347,7 @@ pub proc deposit
     ## make sure asset order correct
     loc_load.7 loc_load.3
     # => [amount_0, amount_1]
-    exec.add_to_reserve
+    exec.add_to_reserves
 end
 
 
@@ -296,7 +370,7 @@ pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, n
     mem_storew_le.NOTE_RECIPIENT_WORD dropw
     # => [] 
     ### get_lp_amount_out (total_supply: felt, amount_0: felt, amount_1: felt, reserve_0: felt, reserve_1: felt)
-    exec.get_reserve
+    exec.get_reserves
     # => [reserve_0, reserve_1]
     loc_load.3
     # => [lp_amount, reserve_0, reserve_1]
@@ -318,7 +392,7 @@ pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, n
     #
     loc_load.5 loc_load.4
     ## => [amount_0_out, amount_1_out]
-    exec.sub_from_reserve
+    exec.sub_from_reserves
     # => []
     loc_load.5 loc_load.4
     exec.sys::truncate_stack

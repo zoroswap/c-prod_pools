@@ -739,7 +739,7 @@ pub async fn fund_wallet(
     client.sync_state().await?;
     let new_balance_user = fetch_vault_for_account_from_chain(&clients.rpc_api, asset_id).await?;
     println!("New account vault: {:?}", new_balance_user);
-    println!("User successfully consumed swap into its wallet");
+    println!("User successfully consumed p2id note into its wallet");
 
     Ok(())
 }

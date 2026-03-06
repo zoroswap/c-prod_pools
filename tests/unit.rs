@@ -1590,7 +1590,7 @@ async fn swap_happy_path_test() -> Result<()> {
     let swap_amount_in: u64 = 100_000;
 
     let mut setup = setup_combined_pool_test_environment().await?;
-    setup.maybe_fund_user_wallet(deposit_amount).await?;
+    setup.maybe_fund_user_wallet(deposit_amount * 2).await?;
 
     let lp_lib = get_lp_local_library()?;
     let c_prod_pool_lib = get_combined_pool_library()?;
@@ -1738,8 +1738,7 @@ async fn swap_happy_path_test() -> Result<()> {
     let storage_after_swap = acc_after_swap.storage();
     let total_supply_after_swap =
         storage_after_swap.get_item(&slot_name("zoro::lp_local::total_supply"))?;
-    let reserve_after_swap =
-        storage_after_swap.get_item(&slot_name("zoro::lp_local::reserve"))?;
+    let reserve_after_swap = storage_after_swap.get_item(&slot_name("zoro::lp_local::reserve"))?;
     let vault_after_swap = acc_after_swap.vault();
 
     let ts_s = total_supply_after_swap[0].as_int();
@@ -1752,8 +1751,14 @@ async fn swap_happy_path_test() -> Result<()> {
     println!("  total_supply  = {} (was {})", ts_s, ts_d);
     println!("  reserve0      = {} (was {})", r0_s, r0_d);
     println!("  reserve1      = {} (was {})", r1_s, r1_d);
-    println!("  pool_balance0 = {} (was {})", pool_balance0_s, pool_balance0_d);
-    println!("  pool_balance1 = {} (was {})", pool_balance1_s, pool_balance1_d);
+    println!(
+        "  pool_balance0 = {} (was {})",
+        pool_balance0_s, pool_balance0_d
+    );
+    println!(
+        "  pool_balance1 = {} (was {})",
+        pool_balance1_s, pool_balance1_d
+    );
 
     // ── Read user balances after swap ──
     let user_vault_after =
@@ -1761,8 +1766,14 @@ async fn swap_happy_path_test() -> Result<()> {
     let user_balance0_after = user_vault_after.get_balance(token0_id).unwrap_or(0);
     let user_balance1_after = user_vault_after.get_balance(token1_id).unwrap_or(0);
     println!("\nUser balances AFTER swap:");
-    println!("  token0 = {} (was {})", user_balance0_after, user_balance0_before);
-    println!("  token1 = {} (was {})", user_balance1_after, user_balance1_before);
+    println!(
+        "  token0 = {} (was {})",
+        user_balance0_after, user_balance0_before
+    );
+    println!(
+        "  token1 = {} (was {})",
+        user_balance1_after, user_balance1_before
+    );
 
     println!("\n=== SUMMARY ===");
     println!("Swap input:  {} token0", swap_amount_in);
