@@ -1,30 +1,57 @@
-use miden::protocol::native_account
-use miden::protocol::active_account
-use miden::protocol::active_note
-use miden::protocol::output_note
-use miden::protocol::asset
+#use miden::protocol::native_account
+#use miden::protocol::active_account
+#use miden::protocol::active_note
+#use miden::protocol::output_note
+#use miden::protocol::asset
 
-#use miden::core::word
 use miden::core::sys
 
-use miden::core::math::u256
 use miden::core::math::u64
 
-const RESERVE_SLOT = word("zoro::c_prod_pool::reserve")
-const CONFIG_SLOT = word("zoro::c_prod_pool::config")
-const LP_SHARES_SLOT = word("zoro::c_prod_pool::lp_shares")
+
+use zoro::math
+#use zoro::storage_utils
+use zoro::lp_local
+
+#use lp_local::update_reserve
+#pub use lp_local::get_reserve
 
 
+### STORAGE SLOTS
+const ASSETS_MAPPING_SLOT = word("zoro::lp_local::assets_mapping")
+const RESERVE_SLOT = word("zoro::lp_local::reserve")
+
+#@todo min LP check in lp_local.masm
 const ERR_INSUFFICIENT_LP_MINTED = "Insufficient LP minted"
-const ERR_SQRT_VERIFY_FAIL = "Sqrt verify fail"
-const ERR_DIV_VERIFY_FAIL = "Div verify fail"
-const ERR_INSUFFICIENT_OUTPUT = "Insufficient output"
 const ERR_INSUFFICIENT_LP_BALANCE = "Insufficient LP balance"
+
+const ERR_INSUFFICIENT_OUTPUT = "Insufficient output"
 const ERR_ZERO_AMOUNT = "Zero amount"
-const ERR_OVERFLOW = "Overflow"
 
 
-@locals(8)
+### MEMORY LOCATIONS
+const ASSET_IN_WORD = 20
+const ASSET_IN_ID_PREFIX = 20
+const ASSET_IN_ID_SUFFIX = 21
+const AMOUNT_IN = 23
+
+const MIN_ASSET_OUT_WORD = 24
+const ASSET_OUT_ID_PREFIX = 24
+const ASSET_OUT_ID_SUFFIX = 25
+const MIN_ASSET_OUT = 27
+
+## NOTE METADATA
+const RETURN_NOTE_DETAILS_WORD = 28
+const RETURN_NOTE_TAG = 28
+const RETURN_NOTE_TYPE = 29
+
+const RETURN_NOTE_RECIPIENT_WORD = 32
+
+
+
+
+#@todo factor out fee amount and make it configurable
+@locals(6)
 pub proc get_amount_out_u64(amount_in: felt, reserve_out: felt, reserve_in: felt) -> felt
     # loc.0: reserve_in
     # loc.1: reserve_out
@@ -32,8 +59,6 @@ pub proc get_amount_out_u64(amount_in: felt, reserve_out: felt, reserve_in: felt
     # loc.3: unused
     # loc.4: amount_in_with_fee_high
     # loc.5: amount_in_with_fee_low
-    # loc.6: unused
-    # loc.7: unused
  
     loc_store.0 loc_store.1 loc_store.2
     
@@ -45,8 +70,9 @@ pub proc get_amount_out_u64(amount_in: felt, reserve_out: felt, reserve_in: felt
     # @note: consider overflowing mul
     exec.u64::wrapping_mul
     # => [amount_in_with_fee_high, amount_in_with_fee_low]
-    loc_storew_le.4
-    # reserve_out 
+    loc_store.4 loc_store.5 loc_load.5 loc_load.4
+    # => [amount_in_with_fee_high, amount_in_with_fee_low]
+    ## reserve_out 
     loc_load.1 u32split 
     # => [reserve_out_high, reserve_out_low, amount_in_with_fee_high, amount_in_with_fee_low]
     # numerator = amount_in_with_fee * reserve_out
@@ -63,22 +89,25 @@ pub proc get_amount_out_u64(amount_in: felt, reserve_out: felt, reserve_in: felt
     # => [denominator_high, denominator_low, numerator_high, numerator_low]
     exec.u64::div
     # => [amount_out_high, amount_out_low]
-    exec.add_no_overflow
+    exec.math::safe_cast_u64_into_felt
     # => [amount_out]
     exec.sys::truncate_stack
 end
 
-@locals(2)
-proc add_no_overflow(a: u32, b: u32) -> felt
-    # loc.0: b
-    # loc.1: result
-    swap loc_store.0
-    loc_load.0 add loc_store.1
-    loc_load.1 loc_load.0 gte assert.err=ERR_OVERFLOW
 
-    loc_load.1
+
+@locals(1)
+pub proc do_swap(asset_in: word, min_asset_out: word, deadline: felt, note_tag: felt, note_type: felt, return_note_recipient: word) -> felt
+    # loc.0: deadline
+    ### localy store asset in, min asset out, and deadline
+    mem_storew_le.ASSET_IN_WORD dropw mem_storew_le.MIN_ASSET_OUT_WORD dropw 
+    ### localy store deadline
+    loc_store.0 
+    ### store note metadata in memory
+    mem_store.RETURN_NOTE_TAG mem_store.RETURN_NOTE_TYPE mem_storew_le.RETURN_NOTE_RECIPIENT_WORD dropw
+
+    #exec.get_reserve
 end
-
 
 
 
@@ -86,24 +115,6 @@ end
 # INTERNAL HELPERS
 # =============================================================================================
 
-#! Reads the reserve storage slot.
-#! Outputs: [reserve0, reserve1, total_lp, 0]
-proc read_reserves
-    push.RESERVE_SLOT[0..2] exec.active_account::get_item
-end
-
-#! Reads the config storage slot.
-#! Outputs: [t0_prefix, t0_suffix, t1_prefix, t1_suffix]
-proc read_config
-    push.CONFIG_SLOT[0..2] exec.active_account::get_item
-end
-
-#! Writes reserves back to storage.
-#! Inputs: [reserve0, reserve1, total_lp, 0]
-pub proc write_reserves
-    push.RESERVE_SLOT[0..2] exec.native_account::set_item
-    dropw
-end
 
 #! Integer division via u64: floor(a / b) where a and b are Felts < 2^63.
 #! Inputs:  [b, a]
@@ -154,14 +165,6 @@ end
 #    exec.read_reserves
 #    exec.sys::truncate_stack
 #end
-
-#! Returns the pool token configuration.
-#! Inputs:  []
-#! Outputs: [t0_prefix, t0_suffix, t1_prefix, t1_suffix]
-pub proc get_config
-    exec.read_config
-    exec.sys::truncate_stack
-end
 
 
 #! Processes a swap note: swaps one token for the other using constant product with 0.3% fee.

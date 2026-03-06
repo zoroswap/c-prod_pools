@@ -34,11 +34,12 @@ use tracing::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::pool_ops::{
-    get_lp_local_fuzz_dummy_library, get_lp_local_library, get_math_library,
-    get_storage_utils_library,
+    get_combined_pool_library, get_lp_local_fuzz_dummy_library, get_lp_local_library,
+    get_math_library, get_pool_library, get_storage_utils_library,
 };
 use crate::utils::{
-    create_library, extract_full_account, fetch_vault_for_account_from_chain, slot_name,
+    create_library, extract_full_account, fetch_vault_for_account_from_chain, read_masm_to_string,
+    slot_name,
 };
 
 //use crate::{Config, order::OrderType};
@@ -133,34 +134,28 @@ pub async fn deploy_c_prod_pool(
     println!("\nLatest block: {}", sync_summary.block_num);
     println!("\n[STEP 1] Create c_prod_pool account");
 
-    let manifest_dir: &str = env!("CARGO_MANIFEST_DIR");
+    // let pool_code = read_masm_to_string("accounts", "c_prod_pool")
+    //     .unwrap_or_else(|e| panic!("Failed to read c_prod_pool code: {e:?}"));
 
-    let c_prod_pool_code_path: PathBuf = [manifest_dir, "asm", "accounts", "c_prod_pool.masm"]
-        .iter()
-        .collect();
-    let pool_code = fs::read_to_string(&c_prod_pool_code_path)
-        .unwrap_or_else(|err| panic!("unable to read from {c_prod_pool_code_path:?}: {err}"));
+    // let assembler = TransactionKernel::assembler(); //.with_warnings_as_errors(true);
 
-    let assembler = TransactionKernel::assembler(); //.with_warnings_as_errors(true);
-
-    let reserves = StorageSlot::with_empty_value(slot_name("zoro::c_prod_pool::reserve"));
-
-    let config_word: Word = [
+    let reserves = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
+    let pool_assets: Word = [
         token0_id.prefix().as_felt(),
         token0_id.suffix(),
         token1_id.prefix().as_felt(),
         token1_id.suffix(),
     ]
     .into();
-    let config = StorageSlot::with_value(slot_name("zoro::c_prod_pool::config"), config_word);
+    let assets_mapping =
+        StorageSlot::with_value(slot_name("zoro::lp_local::assets_mapping"), pool_assets);
 
-    let lp_shares = StorageSlot::with_empty_map(slot_name("zoro::c_prod_pool::lp_shares"));
-
-    let c_prod_pool_library = create_library(assembler.clone(), "zoro::c_prod_pool", &pool_code)
-        .map_err(|e| anyhow!("Failed to create pool library: {e:?}"))
-        .unwrap();
+    // let c_prod_pool_library = create_library(assembler.clone(), "zoro::c_prod_pool", &pool_code)
+    //     .map_err(|e| anyhow!("Failed to create pool library: {e:?}"))
+    //     .unwrap();
+    let c_prod_pool_library = get_pool_library().unwrap();
     let c_prod_pool_component =
-        AccountComponent::new(c_prod_pool_library, vec![reserves, config, lp_shares])?
+        AccountComponent::new(c_prod_pool_library, vec![reserves, assets_mapping])?
             .with_supports_all_types();
 
     let mut init_seed = [0_u8; 32];
@@ -278,6 +273,98 @@ pub async fn deploy_lp_local_pool(
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     Ok((lp_local_contract, key_pair))
+}
+
+/// Deploys a combined pool account with both `lp_local` and `c_prod_pool` components.
+///
+/// The `lp_local` component provides LP management (deposit, withdraw, mint, burn).
+/// The `c_prod_pool` component provides swap logic and references lp_local storage.
+///
+/// Storage slots (from lp_local):
+///   - `assets_mapping`: map with token0/token1 IDs
+///   - `reserve`: [reserve0, reserve1, 0, 0]
+///   - `total_supply`: [total_lp, 0, 0, 0]
+///   - `user_deposits_mapping`: map slot
+pub async fn deploy_combined_pool(
+    client: &mut MidenClient,
+    keystore: FilesystemKeyStore,
+    token0_id: &AccountId,
+    token1_id: &AccountId,
+) -> Result<(Account, AuthSecretKey), ClientError> {
+    let lp_local_library = get_lp_local_library()
+        .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
+    let c_prod_pool_library = get_combined_pool_library()
+        .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
+
+    // lp_local storage slots
+    let mut assets_mapping = StorageMap::new();
+    assets_mapping.insert(
+        Word::default(),
+        [
+            token1_id.suffix(),
+            token1_id.prefix().as_felt(),
+            token0_id.suffix(),
+            token0_id.prefix().as_felt(),
+        ]
+        .into(),
+    )?;
+    let assets_mapping_slot =
+        StorageSlot::with_map(slot_name("zoro::lp_local::assets_mapping"), assets_mapping);
+    let reserve_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
+    let total_supply_slot =
+        StorageSlot::with_empty_value(slot_name("zoro::lp_local::total_supply"));
+    let mut user_deposits_mapping = StorageMap::new();
+    user_deposits_mapping.insert(
+        Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(1)]),
+        Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(1)]),
+    )?;
+    let user_deposits_slot = StorageSlot::with_map(
+        slot_name("zoro::lp_local::user_deposits_mapping"),
+        user_deposits_mapping,
+    );
+
+    let lp_local_component = AccountComponent::new(
+        lp_local_library,
+        vec![
+            assets_mapping_slot,
+            reserve_slot,
+            total_supply_slot,
+            user_deposits_slot,
+        ],
+    )
+    .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
+    .with_supports_all_types();
+
+    let c_prod_pool_component = AccountComponent::new(c_prod_pool_library, vec![])
+        .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
+        .with_supports_all_types();
+
+    let mut init_seed = [0_u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+    let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
+
+    let contract = AccountBuilder::new(init_seed)
+        .account_type(AccountType::RegularAccountUpdatableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(lp_local_component)
+        .with_component(c_prod_pool_component)
+        .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
+        .with_component(BasicWallet)
+        .build()
+        .map_err(|e| anyhow!("Failed to build combined pool contract: {e:?}"))
+        .unwrap();
+
+    println!(
+        "Combined pool deployed: lp_local + c_prod_pool => ID: {:?}",
+        contract.id().to_hex()
+    );
+
+    keystore.add_key(&key_pair).unwrap();
+    client.add_account(&contract.clone(), false).await?;
+    client.sync_state().await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    Ok((contract, key_pair))
 }
 
 /// Deploys an lp_local fuzz dummy account (generated from lp_local.masm with public mint/burn).

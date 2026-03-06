@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use c_prod_pool::common::{
     CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
-    deploy_c_prod_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool,
+    deploy_c_prod_pool, deploy_combined_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool,
     deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, fund_wallet,
     instantiate_simple_client, load_test_state, save_test_state, try_import_account,
 };
@@ -375,6 +375,41 @@ pub async fn setup_lp_local_test_environment() -> Result<TestSetup> {
         clients,
         user,
         contract: lp_local_pool,
+        faucets,
+    };
+
+    if is_user_fresh {
+        setup.fund_user_wallet(DEFAULT_FUND_AMOUNT).await?;
+    }
+
+    Ok(setup)
+}
+
+/// Combined pool E2E setup: faucets, user, combined (lp_local + c_prod_pool) contract, funding.
+pub async fn setup_combined_pool_test_environment() -> Result<TestSetup> {
+    dotenv::dotenv().ok();
+    let (label, endpoint) = resolve_endpoint();
+    let base_dir = PathBuf::from("tmp").join(&label);
+    fs::create_dir_all(&base_dir)?;
+
+    let (mut clients, keystore) = init_clients(&base_dir, &endpoint).await?;
+    let (faucets, user, is_user_fresh) =
+        resolve_faucets_and_user(&mut clients, &keystore, &base_dir).await?;
+
+    let token0_id = faucets[0].faucet.id();
+    let token1_id = faucets[1].faucet.id();
+    let (combined_pool, _) = deploy_combined_pool(
+        &mut clients.client,
+        keystore.clone(),
+        &token0_id,
+        &token1_id,
+    )
+    .await?;
+
+    let mut setup = TestSetup {
+        clients,
+        user,
+        contract: combined_pool,
         faucets,
     };
 

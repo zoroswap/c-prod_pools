@@ -19,8 +19,18 @@ use std::{fs, path::PathBuf};
 
 /// Compiles the pool MASM library from source.
 pub fn get_pool_library() -> Result<Library> {
+    let math_library = get_math_library()?;
+    let storage_utils_library = get_storage_utils_library()?;
+    let lp_local_library = get_lp_local_library()?;
     let source = read_masm_to_string("accounts", "c_prod_pool")?;
-    let assembler = TransactionKernel::assembler().with_warnings_as_errors(true);
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(math_library)
+        .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
+        // .with_static_library(storage_utils_library)
+        // .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?
+        .with_static_library(lp_local_library)
+        .map_err(|e| anyhow!("Failed to add lp_local library to assembler: {e:?}"))?;
     create_library(assembler, "zoro::c_prod_pool", &source)
         .map_err(|e| anyhow!("Failed to compile pool library: {e:?}"))
 }
@@ -386,6 +396,91 @@ pub fn build_withdraw_note(
     let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
 
     let serial_num = rng.draw_word();
+    let recipient = NoteRecipient::new(serial_num, script, inputs);
+    Ok(Note::new(assets, metadata, recipient))
+}
+
+/// Compiles the c_prod_pool library with lp_local, math, and storage_utils as dependencies.
+/// Used when deploying a combined pool (lp_local + c_prod_pool on the same account).
+pub fn get_combined_pool_library() -> Result<Library> {
+    let math_library = get_math_library()?;
+    let storage_utils_library = get_storage_utils_library()?;
+    let lp_local_library = get_lp_local_library()?;
+
+    let source = read_masm_to_string("accounts", "c_prod_pool")?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(math_library)
+        .map_err(|e| anyhow!("Failed to add math library: {e:?}"))?
+        .with_static_library(storage_utils_library)
+        .map_err(|e| anyhow!("Failed to add storage_utils library: {e:?}"))?
+        .with_static_library(lp_local_library)
+        .map_err(|e| anyhow!("Failed to add lp_local library: {e:?}"))?;
+    create_library(assembler, "zoro::c_prod_pool", &source)
+        .map_err(|e| anyhow!("Failed to compile combined pool library: {e:?}"))
+}
+
+/// Compiles the xyk_swap note script, linked against the combined pool library.
+pub fn compile_xyk_swap_note_script(c_prod_pool_library: &Library) -> Result<NoteScript> {
+    let source = read_masm_to_string("notes", "xyk_swap")
+        .map_err(|e| anyhow!("Failed to read xyk_swap note script: {e:?}"))?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(c_prod_pool_library.clone())
+        .map_err(|e| anyhow!("Failed to add c_prod_pool library to assembler: {e:?}"))?;
+    let program = assembler
+        .assemble_program(source)
+        .map_err(|e| anyhow!("Failed to compile xyk_swap note script: {e:?}"))?;
+    Ok(NoteScript::new(program))
+}
+
+/// Builds a swap note targeting the combined pool (lp_local + c_prod_pool).
+///
+/// Note inputs layout (12 felts):
+///   word 0: [0, 0, 0, min_amount_out]          - MIN_ASSET_OUT
+///   word 1: [deadline, note_tag, note_type, 0]  - scalars
+///   word 2: [r0, r1, r2, r3]                   - RECIPIENT digest
+pub fn build_xyk_swap_note(
+    pool_id: AccountId,
+    c_prod_pool_library: &Library,
+    input_asset: FungibleAsset,
+    min_amount_out: u64,
+    deadline: u64,
+    sender: AccountId,
+    return_note_tag: Felt,
+    return_note_type: Felt,
+    return_recipient_digest: Word,
+) -> Result<Note> {
+    let script = compile_xyk_swap_note_script(c_prod_pool_library)?;
+
+    let inputs = NoteInputs::new(vec![
+        Felt::ZERO,
+        Felt::ZERO,
+        Felt::ZERO,
+        Felt::new(min_amount_out),
+        Felt::new(deadline),
+        return_note_tag,
+        return_note_type,
+        Felt::ZERO,
+        return_recipient_digest[0],
+        return_recipient_digest[1],
+        return_recipient_digest[2],
+        return_recipient_digest[3],
+    ])?;
+
+    let assets = NoteAssets::new(vec![input_asset.into()])?;
+
+    let tag = NoteTag::with_account_target(pool_id);
+    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
+
+    let mut seed = [0; 32];
+    let mut std_rng = StdRng::from_os_rng();
+    std_rng.fill(&mut seed);
+    let mut rng = StdRng::from_seed(seed);
+    let mut seed = [0u8; 32];
+    rng.fill(&mut seed);
+    let serial_num =
+        Word::from_random_bytes(&seed).ok_or(anyhow!("Error generating random serial number"))?;
     let recipient = NoteRecipient::new(serial_num, script, inputs);
     Ok(Note::new(assets, metadata, recipient))
 }

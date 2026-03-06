@@ -33,7 +33,8 @@ pub fn create_library(
         source_code,
         source_manager.clone(),
     )?;
-    let library = assembler.clone().assemble_library([module])?;
+    // println!("assembling library: {:?}", library_path);
+    let library = assembler.assemble_library([module])?;
     Ok(library)
 }
 
