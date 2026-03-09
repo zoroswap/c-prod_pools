@@ -14,7 +14,6 @@ use zoro::math
 use zoro::lp_local
 
 use lp_local::set_reserves
-pub use lp_local::get_reserves
 pub use lp_local::get_pool_asset_ids
 use lp_local::add_to_reserve_by_asset_id
 use lp_local::sub_from_reserve_by_asset_id
@@ -114,9 +113,11 @@ pub proc do_swap(asset_in: word, min_asset_out: word, deadline: felt, note_tag: 
     loc_store.0 
     ### store note metadata in memory
     mem_store.RETURN_NOTE_TAG mem_store.RETURN_NOTE_TYPE mem_storew_le.RETURN_NOTE_RECIPIENT_WORD dropw
-    mem_load.ASSET_IN_ID_SUFFIX mem_load.ASSET_IN_ID_PREFIX exec.get_reserve_by_asset_id
+    mem_load.ASSET_IN_ID_SUFFIX mem_load.ASSET_IN_ID_PREFIX 
+    exec.get_reserve_by_asset_id
     # => [reserve_in]
-    mem_load.ASSET_OUT_ID_SUFFIX mem_load.ASSET_OUT_ID_PREFIX exec.get_reserve_by_asset_id
+    mem_load.ASSET_OUT_ID_SUFFIX mem_load.ASSET_OUT_ID_PREFIX 
+    exec.get_reserve_by_asset_id
     # => [reserve_out, reserve_in]
     mem_load.AMOUNT_IN
     # => [amount_in, reserve_out, reserve_in]
@@ -126,22 +127,29 @@ pub proc do_swap(asset_in: word, min_asset_out: word, deadline: felt, note_tag: 
     # => [min_amount_out, amount_out]
     gte
     if.true # sufficient amount out
-        ### send asset out to user
+        ### set asset out to be sent to user
         padw mem_loadw_le.ASSET_OUT_WORD
         mem_storew_le.RETURN_NOTE_ASSET_WORD dropw
-        ### add ASSEET IN to pool
+        ### add ASSEET IN to the pool
         padw mem_loadw_le.ASSET_IN_WORD
         exec.native_account::add_asset dropw
         # => []
         ### update reserve
-
+        padw mem_loadw_le.ASSET_OUT_WORD
+        # => [asset_out_id_prefix, asset_out_id_suffix, 0, amount_out]
+        movup.3
+        # => [amount_out, asset_out_id_prefix, asset_out_id_suffix]
+        exec.sub_from_reserve_by_asset_id
+        padw mem_loadw_le.ASSET_IN_WORD  movup.3
+        # => [amount_in, asset_in_id_prefix, asset_in_id_suffix]
+        exec.add_to_reserve_by_asset_id
+        # => []
     else # insufficient amount out
         ### send asset in back to user
         padw mem_loadw_le.ASSET_IN_WORD
         mem_storew_le.RETURN_NOTE_ASSET_WORD dropw
     end
     exec._create_p2id_note
-
 
     exec.sys::truncate_stack
 end

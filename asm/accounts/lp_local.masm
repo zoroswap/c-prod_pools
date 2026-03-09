@@ -136,9 +136,9 @@ pub proc get_reserves#() -> (felt, felt)
     drop drop
 end
 
-pub proc set_reserves#(reserve_0: felt, reserve_1: felt)
+pub proc set_reserves(reserve_0: felt, reserve_1: felt)
     ### amount validation vs vault
-    push.0.0push.RESERVE_SLOT[0..2] exec.native_account::set_item
+    push.0.0 push.RESERVE_SLOT[0..2] exec.native_account::set_item
     dropw
 end
 
@@ -235,10 +235,12 @@ pub proc add_to_reserves#(amount_0: felt, amount_1: felt)
     swap
     # => [new_reserve_0, new_reserve_1]
     exec.set_reserves
+    # => []
+    exec.sys::truncate_stack
 end
 
 @locals(2)
-proc sub_from_reserves#(amount_0: felt, amount_1: felt)
+pub proc sub_from_reserves#(amount_0: felt, amount_1: felt)
     # loc.0: amount_0
     # loc.1: amount_1
     loc_store.0 loc_store.1
@@ -255,9 +257,83 @@ proc sub_from_reserves#(amount_0: felt, amount_1: felt)
     exec.set_reserves
 end
 
-pub proc add_to_reserve_by_asset_id#(amount: felt, asset_id_prefix: felt, asset_id_suffix: felt)
+@locals(4)
+pub proc set_reserve_by_asset_id(amount: felt, asset_id_prefix: felt, asset_id_suffix: felt)
+    # loc.0: amount
+    # loc.1: asset_id_prefix
+    # loc.2: asset_id_suffix
+    # loc.3: asset_index
+    loc_store.0 loc_store.1 loc_store.2
+    # => []
+    loc_load.2 loc_load.1
+    # => [asset_id_prefix, asset_id_suffix]
+    exec.get_asset_index loc_store.3
+    exec.get_reserves
+    # => [reserve_0, reserve_1]
+    loc_load.3
+    # => [asset_index, reserve_0, reserve_1]
+    ### if asset_index == 0 set reserve_0
+    eq.0 if.true
+        # => [reserve_0, reserve_1]
+        drop loc_load.0
+        # => [new_reserve_0, reserve_1]    
+    else ### check if asset_index == 1
+        # => [reserve_0, reserve_1]
+        loc_load.3 eq.1 if.true
+            # => [reserve_0, reserve_1]
+            loc_load.0 
+            # => [new_reserve_1, reserve_0, reserve_1]
+            swap.2 drop
+            # => [reserve_0, new_reserve_1]    
+        else
+            ### asset index not found
+            assert.err=ERR_UNKNOWN_ASSET
+        end
+    end
+    exec.set_reserves
+    # => []
+    exec.sys::truncate_stack
 end
-proc sub_from_reserve_by_asset_id#(amount: felt, asset_id_prefix: felt, asset_id_suffix: felt)
+
+@locals(4)
+pub proc add_to_reserve_by_asset_id(amount: felt, asset_id_prefix: felt, asset_id_suffix: felt)
+    # loc.0: amount
+    # loc.1: asset_id_prefix
+    # loc.2: asset_id_suffix
+    # loc.3: new_reserve
+    loc_store.0 loc_store.1 loc_store.2
+    # => []
+    loc_load.2 loc_load.1
+    # => [asset_id_prefix, asset_id_suffix]
+    exec.get_reserve_by_asset_id loc_load.0
+    # => [amount, reserve]
+    exec.math::safe_add 
+    # => [new_reserve] 
+    loc_store.3
+    # => []
+    loc_load.2 loc_load.1 loc_load.3
+    # => [ new_reserve, asset_id_suffix, asset_id_prefix]
+    exec.set_reserve_by_asset_id
+    # => []
+end
+
+@locals(3)
+pub proc sub_from_reserve_by_asset_id(amount: felt, asset_id_prefix: felt, asset_id_suffix: felt)
+    # loc.0: amount
+    # loc.1: asset_id_prefix
+    # loc.2: asset_id_suffix
+    loc_store.0 loc_store.1 loc_store.2
+    # => []
+    loc_load.2 loc_load.1
+    # => [asset_id_prefix, asset_id_suffix]
+    exec.get_reserve_by_asset_id loc_load.0
+    # => [amount, reserve]
+    exec.math::safe_sub 
+    # => [new_reserve] 
+    loc_load.2 loc_load.1 movup.2
+    # => [ new_reserve, asset_id_suffix, asset_id_prefix]
+    exec.set_reserve_by_asset_id
+    # => []
 end
 
 @locals(3)

@@ -972,6 +972,120 @@ async fn sub_from_storage_item_underflow_test() -> Result<()> {
 }
 
 #[tokio::test]
+async fn lp_local_asset_getters_test() -> Result<()> {
+    let mut setup = setup_lp_local_test_environment().await?;
+    let lp_local_library = get_lp_local_library()?;
+    let mut rng = rand::rng();
+
+    let pool_id = setup.contract.id();
+    let token0_id = setup.faucets[0].faucet.id();
+    let token1_id = setup.faucets[1].faucet.id();
+
+    let getters_source = format!(
+        "use zoro::lp_local\n\
+         use miden::core::sys\n\
+         begin\n\
+             push.{}.{}\n\
+             call.lp_local::get_asset_index\n\
+             push.{}.{}\n\
+             call.lp_local::get_asset_index\n\
+             exec.sys::truncate_stack\n\
+         end",
+        token1_id.suffix().as_int(),
+        token1_id.prefix().as_u64(),
+        token0_id.suffix().as_int(),
+        token0_id.prefix().as_u64()
+    );
+
+    let script = compile_custom_tx_script(&lp_local_library, &getters_source)?;
+
+    let expected = vec![0, 1];
+    let stack = setup
+        .clients
+        .client
+        .execute_program(
+            setup.contract.id(),
+            script.clone(),
+            AdviceInputs::default(),
+            BTreeSet::new(),
+        )
+        .await?;
+
+    let got: Vec<u64> = stack[0..2].iter().map(|x| x.as_int()).collect();
+
+    assert_eq!(
+        got, expected,
+        "lp_local_asset_getters_test mismatch: got={:?}, expected={:?}",
+        got, expected
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn lp_local_reserve_by_asset_id_test() -> Result<()> {
+    let mut setup = setup_lp_local_test_environment().await?;
+    let lp_local_library = get_lp_local_library()?;
+
+    let token0_id = setup.faucets[0].faucet.id();
+    let token1_id = setup.faucets[1].faucet.id();
+
+    let start_reserves_0 = 100;
+    let start_reserves_1 = 200;
+    let add_to_token0_amount = 50;
+    let sub_from_token1_amount = 30;
+
+    let source = format!(
+        "use zoro::lp_local\n\
+         use miden::core::sys\n\
+         begin\n\
+             push.{start_reserves_1}.{start_reserves_0}\n\
+             call.lp_local::set_reserves\n\
+             push.{t0_suffix}.{t0_prefix}.{add_to_token0_amount}\n\
+             call.lp_local::add_to_reserve_by_asset_id\n\
+             push.{t1_suffix}.{t1_prefix}.{sub_from_token1_amount}\n\
+             call.lp_local::sub_from_reserve_by_asset_id\n\
+             push.{t1_suffix}.{t1_prefix}\n\
+             call.lp_local::get_reserve_by_asset_id\n\
+             push.{t0_suffix}.{t0_prefix}\n\
+             call.lp_local::get_reserve_by_asset_id\n\
+             exec.sys::truncate_stack\n\
+         end",
+        t0_prefix = token0_id.prefix().as_u64(),
+        t0_suffix = token0_id.suffix().as_int(),
+        t1_prefix = token1_id.prefix().as_u64(),
+        t1_suffix = token1_id.suffix().as_int(),
+    );
+
+    let script = compile_custom_tx_script(&lp_local_library, &source)?;
+
+    let stack = setup
+        .clients
+        .client
+        .execute_program(
+            setup.contract.id(),
+            script,
+            AdviceInputs::default(),
+            BTreeSet::new(),
+        )
+        .await?;
+
+    let reserve_0 = stack[0].as_int();
+    let reserve_1 = stack[1].as_int();
+    let expected_reserve_0 = start_reserves_0 + add_to_token0_amount;
+    let expected_reserve_1 = start_reserves_1 - sub_from_token1_amount;
+    assert_eq!(
+        (reserve_0, reserve_1),
+        (expected_reserve_0, expected_reserve_1),
+        "reserve_by_asset_id: expected (reserve_0=120, reserve_1=200), got (reserve_0={}, reserve_1={})",
+        reserve_0,
+        reserve_1,
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn lp_mint_fuzz_test() -> Result<()> {
     use rand::Rng;
 
@@ -1691,11 +1805,12 @@ async fn swap_happy_path_test() -> Result<()> {
         build_p2id_recipient(setup.user.id(), return_note_serial_num).unwrap();
 
     let swap_input_asset = FungibleAsset::new(token0_id.clone(), swap_amount_in)?;
+    let swap_min_output_asset = FungibleAsset::new(token1_id.clone(), expected_out - 5)?;
     let swap_note = build_xyk_swap_note(
         setup.contract.id(),
         &c_prod_pool_lib,
         swap_input_asset,
-        0,
+        swap_min_output_asset,
         0,
         setup.user.id(),
         return_note_tag.into(),

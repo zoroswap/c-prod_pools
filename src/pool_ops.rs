@@ -444,7 +444,7 @@ pub fn build_xyk_swap_note(
     pool_id: AccountId,
     c_prod_pool_library: &Library,
     input_asset: FungibleAsset,
-    min_amount_out: u64,
+    min_output_asset: FungibleAsset,
     deadline: u64,
     sender: AccountId,
     return_note_tag: Felt,
@@ -454,10 +454,10 @@ pub fn build_xyk_swap_note(
     let script = compile_xyk_swap_note_script(c_prod_pool_library)?;
 
     let inputs = NoteInputs::new(vec![
+        min_output_asset.faucet_id().prefix().as_felt(),
+        min_output_asset.faucet_id().suffix().into(),
         Felt::ZERO,
-        Felt::ZERO,
-        Felt::ZERO,
-        Felt::new(min_amount_out),
+        Felt::new(min_output_asset.amount()),
         Felt::new(deadline),
         return_note_tag,
         return_note_type,
