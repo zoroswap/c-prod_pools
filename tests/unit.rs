@@ -10,7 +10,7 @@ use c_prod_pool::pool_ops::{
 use c_prod_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
 use miden_client::{
     Felt, Word,
-    account::StorageSlotName,
+    account::{AccountId, StorageSlotName},
     asset::FungibleAsset,
     note::{NoteTag, NoteType, build_p2id_recipient},
     store::{AccountRecord, AccountRecordData},
@@ -1024,42 +1024,111 @@ async fn lp_local_asset_getters_test() -> Result<()> {
 
 #[tokio::test]
 async fn lp_local_reserve_by_asset_id_test() -> Result<()> {
+    use rand::Rng;
+
     let mut setup = setup_lp_local_test_environment().await?;
     let lp_local_library = get_lp_local_library()?;
+    let mut rng = rand::rng();
 
     let token0_id = setup.faucets[0].faucet.id();
     let token1_id = setup.faucets[1].faucet.id();
 
-    let start_reserves_0 = 100;
-    let start_reserves_1 = 200;
-    let add_to_token0_amount = 50;
-    let sub_from_token1_amount = 30;
+    let iterations = 100u32;
+    let min_reserve = 50000000u64;
+    let max_reserve = 500000000000u64;
+    let max_add = 200000u64;
+    let max_sub = 200000u64;
 
-    let source = format!(
-        "use zoro::lp_local\n\
+    for i in 0..iterations {
+        let start_reserves_0 = rng.random_range(min_reserve..=max_reserve);
+        let start_reserves_1 = rng.random_range(min_reserve..=max_reserve);
+        let add_to_token0_amount = rng.random_range(1..=max_add);
+        let sub_from_token1_amount = rng.random_range(1..=max_sub.min(start_reserves_1));
+
+        let source = format!(
+            "use zoro::lp_local\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.{start_reserves_1}.{start_reserves_0}\n\
+                 call.lp_local::set_reserves\n\
+                 push.{t0_suffix}.{t0_prefix}.{add_to_token0_amount}\n\
+                 call.lp_local::add_to_reserve_by_asset_id\n\
+                 push.{t1_suffix}.{t1_prefix}.{sub_from_token1_amount}\n\
+                 call.lp_local::sub_from_reserve_by_asset_id\n\
+                 push.{t1_suffix}.{t1_prefix}\n\
+                 call.lp_local::get_reserve_by_asset_id\n\
+                 push.{t0_suffix}.{t0_prefix}\n\
+                 call.lp_local::get_reserve_by_asset_id\n\
+                 exec.sys::truncate_stack\n\
+             end",
+            t0_prefix = token0_id.prefix().as_u64(),
+            t0_suffix = token0_id.suffix().as_int(),
+            t1_prefix = token1_id.prefix().as_u64(),
+            t1_suffix = token1_id.suffix().as_int(),
+        );
+
+        let script = compile_custom_tx_script(&lp_local_library, &source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.contract.id(),
+                script,
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let reserve_0 = stack[0].as_int();
+        let reserve_1 = stack[1].as_int();
+        let expected_reserve_0 = start_reserves_0 + add_to_token0_amount;
+        let expected_reserve_1 = start_reserves_1 - sub_from_token1_amount;
+        println!(
+            "iteration {}: start_reserves_0={}, start_reserves_1={}, add_to_token0_amount={}, sub_from_token1_amount={}, got (reserve_0={}, reserve_1={}), expected (reserve_0={}, reserve_1={})",
+            i + 1,
+            start_reserves_0,
+            start_reserves_1,
+            add_to_token0_amount,
+            sub_from_token1_amount,
+            reserve_0,
+            reserve_1,
+            expected_reserve_0,
+            expected_reserve_1
+        );
+        assert_eq!(
+            (reserve_0, reserve_1),
+            (expected_reserve_0, expected_reserve_1),
+            "reserve_by_asset_id: expected (reserve_0={}, reserve_1={}), got (reserve_0={}, reserve_1={})",
+            expected_reserve_0,
+            expected_reserve_1,
+            reserve_0,
+            reserve_1,
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn lp_local_reserve_by_asset_id_unknown_asset_fails_test() -> Result<()> {
+    let mut setup = setup_lp_local_test_environment().await?;
+    let lp_local_library = get_lp_local_library()?;
+
+    // Non-pool asset id (0, 0) so get_reserve_by_asset_id hits ERR_UNKNOWN_ASSET.
+    let source = "use zoro::lp_local\n\
          use miden::core::sys\n\
          begin\n\
-             push.{start_reserves_1}.{start_reserves_0}\n\
+             push.100.200\n\
              call.lp_local::set_reserves\n\
-             push.{t0_suffix}.{t0_prefix}.{add_to_token0_amount}\n\
-             call.lp_local::add_to_reserve_by_asset_id\n\
-             push.{t1_suffix}.{t1_prefix}.{sub_from_token1_amount}\n\
-             call.lp_local::sub_from_reserve_by_asset_id\n\
-             push.{t1_suffix}.{t1_prefix}\n\
-             call.lp_local::get_reserve_by_asset_id\n\
-             push.{t0_suffix}.{t0_prefix}\n\
+             push.0.0\n\
              call.lp_local::get_reserve_by_asset_id\n\
              exec.sys::truncate_stack\n\
-         end",
-        t0_prefix = token0_id.prefix().as_u64(),
-        t0_suffix = token0_id.suffix().as_int(),
-        t1_prefix = token1_id.prefix().as_u64(),
-        t1_suffix = token1_id.suffix().as_int(),
-    );
+         end";
 
     let script = compile_custom_tx_script(&lp_local_library, &source)?;
 
-    let stack = setup
+    let result = setup
         .clients
         .client
         .execute_program(
@@ -1068,18 +1137,11 @@ async fn lp_local_reserve_by_asset_id_test() -> Result<()> {
             AdviceInputs::default(),
             BTreeSet::new(),
         )
-        .await?;
+        .await;
 
-    let reserve_0 = stack[0].as_int();
-    let reserve_1 = stack[1].as_int();
-    let expected_reserve_0 = start_reserves_0 + add_to_token0_amount;
-    let expected_reserve_1 = start_reserves_1 - sub_from_token1_amount;
-    assert_eq!(
-        (reserve_0, reserve_1),
-        (expected_reserve_0, expected_reserve_1),
-        "reserve_by_asset_id: expected (reserve_0=120, reserve_1=200), got (reserve_0={}, reserve_1={})",
-        reserve_0,
-        reserve_1,
+    assert!(
+        result.is_err(),
+        "get_reserve_by_asset_id with non-pool asset id should fail with ERR_UNKNOWN_ASSET"
     );
 
     Ok(())
