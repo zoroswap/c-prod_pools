@@ -101,6 +101,46 @@ pub proc get_amount_out_u64(amount_in: felt, reserve_out: felt, reserve_in: felt
     exec.sys::truncate_stack
 end
 
+@locals(3)
+pub proc get_amount_in_u64(amount_out: felt, reserve_in: felt, reserve_out: felt) -> felt
+    # loc.0: reserve_in
+    # loc.1: reserve_out
+    # loc.2: amount_out
+
+    loc_store.2 loc_store.0 loc_store.1
+    
+    # amount_out
+    loc_load.2 u32split 
+    # => [amount_out_high, amount_out_low]
+    push.1000 u32split
+    # => [1000_high, 1000_low, amount_out_high, amount_out_low]
+    # @note: consider overflowing mul
+    exec.u64::wrapping_mul
+    # => [amount_out_scaled_high, amount_out_scaled_low]
+    ## reserve_in 
+    loc_load.0 u32split 
+    # => [reserve_in_high, reserve_in_low, amount_out_scaled_high, amount_out_scaled_low]
+    # numerator = amount_out_scaled * reserve_in
+    exec.u64::wrapping_mul
+    # => [numerator_scaled_high, numerator_scaled_low]
+    ## denominator = (reserve_out - amount_out) * (1-fee)
+    ## reserve_out
+    loc_load.1 u32split 
+    # => [reserve_out_high, reserve_out_low, numerator_scaled_high, numerator_scaled_low]
+    ## amount_out
+    loc_load.2 u32split
+    # => [amount_out_high, amount_out_low, reserve_out_high, reserve_out_low, numerator_scaled_high, numerator_scaled_low]
+    exec.u64::wrapping_sub
+    # => [denominator_high, denominator_low, numerator_scaled_high, numerator_scaled_low]
+    push.997 u32split exec.u64::wrapping_mul
+    # => [denominator_with_fee_high, denominator_with_fee_low, numerator_high, numerator_low]
+    exec.u64::div
+    # => [amount_in_high, amount_in_low]
+    exec.math::safe_cast_u64_into_felt
+    # => [amount_in]
+    exec.sys::truncate_stack
+end
+
 
 
 @locals(2)

@@ -236,6 +236,13 @@ pub fn expected_amount_out(reserve_in: Felt, reserve_out: Felt, amount_in: Felt)
     Felt::new((numerator / denominator) as u64)
 }
 
+pub fn expected_amount_in(amount_out: Felt, reserve_in: Felt, reserve_out: Felt) -> Felt {
+    let amount_out_scaled = amount_out.as_int() as u128 * 1000;
+    let numerator = reserve_in.as_int() as u128 * amount_out_scaled;
+    let denominator = (reserve_out.as_int() as u128 - amount_out.as_int() as u128) * 997;
+    Felt::new((numerator / denominator) as u64)
+}
+
 /// Minimal setup: client + one basic account. No faucets, no contract deployment.
 /// `user` and `contract` point to the same basic account.
 pub async fn setup_lightweight_environment() -> Result<TestSetup> {
