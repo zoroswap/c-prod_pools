@@ -59,7 +59,7 @@ const RETURN_NOTE_AMOUNT = 43
 
 #@todo factor out fee amount and make it configurable
 @locals(6)
-pub proc get_amount_out_u64(amount_in: felt, reserve_out: felt, reserve_in: felt) -> felt
+pub proc get_amount_out_u64(amount_in: felt, reserve_in: felt, reserve_out: felt) -> felt
     # loc.0: reserve_in
     # loc.1: reserve_out
     # loc.2: amount_in
@@ -67,7 +67,7 @@ pub proc get_amount_out_u64(amount_in: felt, reserve_out: felt, reserve_in: felt
     # loc.4: amount_in_with_fee_high
     # loc.5: amount_in_with_fee_low
  
-    loc_store.0 loc_store.1 loc_store.2
+    loc_store.2 loc_store.0 loc_store.1
     
     # amount_in
     loc_load.2 u32split 
@@ -144,7 +144,7 @@ end
 
 
 @locals(2)
-pub proc do_swap(asset_in: word, min_asset_out: word, deadline: felt, note_tag: felt, note_type: felt, return_note_recipient: word) -> felt
+pub proc swap_exact_tokens_for_tokens(asset_in: word, min_asset_out: word, deadline: felt, note_tag: felt, note_type: felt, return_note_recipient: word) -> felt
     # loc.0: deadline
     # loc.1: amount_out
     ### localy store asset in, min asset out, and deadline
@@ -153,14 +153,14 @@ pub proc do_swap(asset_in: word, min_asset_out: word, deadline: felt, note_tag: 
     loc_store.0 
     ### store note metadata in memory
     mem_store.RETURN_NOTE_TAG mem_store.RETURN_NOTE_TYPE mem_storew_le.RETURN_NOTE_RECIPIENT_WORD dropw
-    mem_load.ASSET_IN_ID_SUFFIX mem_load.ASSET_IN_ID_PREFIX 
-    exec.get_reserve_by_asset_id
-    # => [reserve_in]
     mem_load.ASSET_OUT_ID_SUFFIX mem_load.ASSET_OUT_ID_PREFIX 
     exec.get_reserve_by_asset_id
-    # => [reserve_out, reserve_in]
+    # => [reserve_out]
+    mem_load.ASSET_IN_ID_SUFFIX mem_load.ASSET_IN_ID_PREFIX 
+    exec.get_reserve_by_asset_id
+    # => [reserve_in, reserve_out]
     mem_load.AMOUNT_IN
-    # => [amount_in, reserve_out, reserve_in]
+    # => [amount_in, reserve_in, reserve_out]
     exec.get_amount_out_u64 loc_store.1 loc_load.1
     # => [amount_out]
     mem_load.AMOUNT_OUT

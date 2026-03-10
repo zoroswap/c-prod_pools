@@ -55,7 +55,7 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
             "use zoro::c_prod_pool\n\
              use miden::core::sys\n\
              begin\n\
-                 push.{amount_in}.{reserve_out}.{reserve_in}\n\
+                 push.{reserve_out}.{reserve_in}.{amount_in}\n\
                  call.c_prod_pool::get_amount_out_u64\n\
                  exec.sys::truncate_stack\n\
              end"
@@ -74,7 +74,7 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
             )
             .await?;
 
-        let expected = expected_amount_out(reserve_in, reserve_out, amount_in);
+        let expected = expected_amount_out(amount_in, reserve_in, reserve_out);
 
         println!(
             "[{}/{}] reserve_in={}, reserve_out={}, amount_in={} => got={}, expected={}",

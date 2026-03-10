@@ -229,7 +229,7 @@ async fn resolve_faucets_and_user(
 // Setup functions — all return TestSetup
 // ---------------------------------------------------------------------------
 
-pub fn expected_amount_out(reserve_in: Felt, reserve_out: Felt, amount_in: Felt) -> Felt {
+pub fn expected_amount_out(amount_in: Felt, reserve_in: Felt, reserve_out: Felt) -> Felt {
     let fee_adjusted = amount_in.as_int() as u128 * 997;
     let numerator = reserve_out.as_int() as u128 * fee_adjusted;
     let denominator = reserve_in.as_int() as u128 * 1000 + fee_adjusted;

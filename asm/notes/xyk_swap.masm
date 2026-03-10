@@ -37,6 +37,6 @@ begin
     padw mem_loadw_be.40
     # => [ASSET_IN, MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, RECIPIENT_WORD]
 
-    call.c_prod_pool::do_swap
+    call.c_prod_pool::swap_exact_tokens_for_tokens
     exec.sys::truncate_stack
 end
