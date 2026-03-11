@@ -115,6 +115,74 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
 }
 
 #[tokio::test]
+async fn quote_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let min_reserve: u64 = 1_000_000_000;
+    let max_reserve: u64 = 100_000_000_000;
+    let min_amount: u64 = 100_000;
+    let max_amount: u64 = 100_000;
+    let iterations: usize = 50;
+
+    let mut setup = setup_lightweight_environment().await?;
+    let pool_library = get_pool_library()?;
+    let mut rng = rand::rng();
+
+    for i in 0..iterations {
+        let reserve_a = Felt::new(rng.random_range(min_reserve..=max_reserve));
+        let reserve_b = Felt::new(rng.random_range(min_reserve..=max_reserve));
+        let amount_a = Felt::new(rng.random_range(min_amount..=max_amount));
+
+        let source = format!(
+            "use zoro::xyk_pool\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.{reserve_b}.{reserve_a}.{amount_a}\n\
+                 call.xyk_pool::quote\n\
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let script = compile_custom_tx_script(&pool_library, &source)?;
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.contract.id(),
+                script.clone(),
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let expected = expected_quote(amount_a, reserve_a, reserve_b);
+        println!(
+            "[{}/{}] amount_a={}, reserve_a={}, reserve_b={} => got={}, expected={}",
+            i + 1,
+            iterations,
+            amount_a.as_int(),
+            reserve_a.as_int(),
+            reserve_b.as_int(),
+            stack[0].as_int(),
+            expected.as_int(),
+        );
+        assert_eq!(
+            stack[0],
+            expected,
+            "Mismatch at iteration {}: amount_a={}, reserve_a={}, reserve_b={}",
+            i + 1,
+            amount_a.as_int(),
+            reserve_a.as_int(),
+            reserve_b.as_int(),
+        );
+    }
+
+    println!("All {iterations} quote fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_amount_in_u64_fuzz_test() -> Result<()> {
     use rand::Rng;
 

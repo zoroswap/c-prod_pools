@@ -56,6 +56,27 @@ const RETURN_NOTE_AMOUNT = 43
 
 
 
+pub proc quote(amount_A: felt, reserve_A: felt, reserve_B: felt) -> felt
+    # => [amount_A, reserve_A, reserve_B]
+    u32split
+    # => [amount_A_high, amount_A_low, reserve_A, reserve_B]
+    movup.3
+    # => [ reserve_B, amount_A_hi, amount_A_lo, reserve_A]
+    u32split
+    # => [reserve_B_high, reserve_B_low, amount_A_hi, amount_A_lo, reserve_A]
+    exec.u64::wrapping_mul
+    # => [numerator_high, numerator_low, reserve_A]
+    movup.2
+    # => [reserve_A, numerator_high, numerator_low]
+    u32split
+    # => [reserve_A_high, reserve_A_low, numerator_high, numerator_low]
+    exec.u64::div
+    # => [amount_B_high, amount_B_low]
+    exec.math::safe_cast_u64_into_felt
+    # => [amount_B]
+    exec.sys::truncate_stack
+end 
+
 
 #@todo factor out fee amount and make it configurable
 @locals(6)
