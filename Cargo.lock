@@ -271,32 +271,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
-name = "c_prod_pool"
-version = "0.4.1"
-dependencies = [
- "anyhow",
- "base64",
- "chrono",
- "dashmap",
- "dotenv",
- "miden-assembly",
- "miden-client",
- "miden-client-sqlite-store",
- "miden-protocol",
- "miden-standards",
- "miden-tx",
- "rand",
- "rand_chacha",
- "rusqlite",
- "serde",
- "serde_json",
- "tokio",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "cc"
 version = "1.2.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4350,6 +4324,32 @@ checksum = "c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277"
 dependencies = [
  "curve25519-dalek",
  "rand_core 0.6.4",
+]
+
+[[package]]
+name = "xyk_pool"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "base64",
+ "chrono",
+ "dashmap",
+ "dotenv",
+ "miden-assembly",
+ "miden-client",
+ "miden-client-sqlite-store",
+ "miden-protocol",
+ "miden-standards",
+ "miden-tx",
+ "rand",
+ "rand_chacha",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

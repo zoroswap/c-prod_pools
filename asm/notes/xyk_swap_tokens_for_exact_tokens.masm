@@ -1,5 +1,5 @@
 use miden::protocol::active_note
-use zoro::c_prod_pool
+use zoro::xyk_pool
 use miden::core::sys
 
 const EXPECTED_NUM_ASSETS = 1
@@ -39,6 +39,6 @@ begin
     swapw
     # => [ASSET_OUT, MAX_ASSET_IN, deadline, note_tag, note_type, RECIPIENT]
 
-    call.c_prod_pool::swap_tokens_for_exact_tokens
+    call.xyk_pool::swap_tokens_for_exact_tokens
     exec.sys::truncate_stack
 end

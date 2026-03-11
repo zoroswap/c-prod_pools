@@ -124,7 +124,7 @@ pub async fn create_basic_account(
 ///   - `reserve`:   [reserve0, reserve1, total_lp, 0]  (initially empty)
 ///   - `config`:    [token0_prefix, token0_suffix, token1_prefix, token1_suffix]
 ///   - `lp_shares`: StorageMap (initially empty)
-pub async fn deploy_c_prod_pool(
+pub async fn deploy_xyk_pool(
     client: &mut MidenClient,
     keystore: FilesystemKeyStore,
     token0_id: &AccountId,
@@ -132,10 +132,10 @@ pub async fn deploy_c_prod_pool(
 ) -> Result<(Account, AuthSecretKey), ClientError> {
     let sync_summary = client.sync_state().await?;
     println!("\nLatest block: {}", sync_summary.block_num);
-    println!("\n[STEP 1] Create c_prod_pool account");
+    println!("\n[STEP 1] Create xyk_pool account");
 
-    // let pool_code = read_masm_to_string("accounts", "c_prod_pool")
-    //     .unwrap_or_else(|e| panic!("Failed to read c_prod_pool code: {e:?}"));
+    // let pool_code = read_masm_to_string("accounts", "xyk_pool")
+    //     .unwrap_or_else(|e| panic!("Failed to read xyk_pool code: {e:?}"));
 
     // let assembler = TransactionKernel::assembler(); //.with_warnings_as_errors(true);
 
@@ -150,12 +150,12 @@ pub async fn deploy_c_prod_pool(
     let assets_mapping =
         StorageSlot::with_value(slot_name("zoro::lp_local::assets_mapping"), pool_assets);
 
-    // let c_prod_pool_library = create_library(assembler.clone(), "zoro::c_prod_pool", &pool_code)
+    // let xyk_pool_library = create_library(assembler.clone(), "zoro::xyk_pool", &pool_code)
     //     .map_err(|e| anyhow!("Failed to create pool library: {e:?}"))
     //     .unwrap();
-    let c_prod_pool_library = get_pool_library().unwrap();
-    let c_prod_pool_component =
-        AccountComponent::new(c_prod_pool_library, vec![reserves, assets_mapping])?
+    let xyk_pool_library = get_pool_library().unwrap();
+    let xyk_pool_component =
+        AccountComponent::new(xyk_pool_library, vec![reserves, assets_mapping])?
             .with_supports_all_types();
 
     let mut init_seed = [0_u8; 32];
@@ -163,17 +163,17 @@ pub async fn deploy_c_prod_pool(
 
     let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
 
-    let c_prod_pool_contract = AccountBuilder::new(init_seed)
+    let xyk_pool_contract = AccountBuilder::new(init_seed)
         .account_type(AccountType::RegularAccountUpdatableCode)
         .storage_mode(AccountStorageMode::Public)
-        .with_component(c_prod_pool_component.clone())
+        .with_component(xyk_pool_component.clone())
         .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
         .with_component(BasicWallet)
         .build()?;
 
     println!(
         "pool contract commitment hash: {:?}",
-        c_prod_pool_contract.commitment().to_hex()
+        xyk_pool_contract.commitment().to_hex()
     );
     println!(
         "pool config: token0={}, token1={}",
@@ -183,12 +183,12 @@ pub async fn deploy_c_prod_pool(
 
     keystore.add_key(&key_pair).unwrap();
     client
-        .add_account(&c_prod_pool_contract.clone(), false)
+        .add_account(&xyk_pool_contract.clone(), false)
         .await?;
     client.sync_state().await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    Ok((c_prod_pool_contract, key_pair))
+    Ok((xyk_pool_contract, key_pair))
 }
 
 /// Deploys an lp_local pool account for the given token pair.
@@ -275,10 +275,10 @@ pub async fn deploy_lp_local_pool(
     Ok((lp_local_contract, key_pair))
 }
 
-/// Deploys a combined pool account with both `lp_local` and `c_prod_pool` components.
+/// Deploys a combined pool account with both `lp_local` and `xyk_pool` components.
 ///
 /// The `lp_local` component provides LP management (deposit, withdraw, mint, burn).
-/// The `c_prod_pool` component provides swap logic and references lp_local storage.
+/// The `xyk_pool` component provides swap logic and references lp_local storage.
 ///
 /// Storage slots (from lp_local):
 ///   - `assets_mapping`: map with token0/token1 IDs
@@ -293,7 +293,7 @@ pub async fn deploy_combined_pool(
 ) -> Result<(Account, AuthSecretKey), ClientError> {
     let lp_local_library = get_lp_local_library()
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
-    let c_prod_pool_library = get_combined_pool_library()
+    let xyk_pool_library = get_combined_pool_library()
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
 
     // lp_local storage slots
@@ -335,7 +335,7 @@ pub async fn deploy_combined_pool(
     .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
     .with_supports_all_types();
 
-    let c_prod_pool_component = AccountComponent::new(c_prod_pool_library, vec![])
+    let xyk_pool_component = AccountComponent::new(xyk_pool_library, vec![])
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
         .with_supports_all_types();
 
@@ -347,7 +347,7 @@ pub async fn deploy_combined_pool(
         .account_type(AccountType::RegularAccountUpdatableCode)
         .storage_mode(AccountStorageMode::Public)
         .with_component(lp_local_component)
-        .with_component(c_prod_pool_component)
+        .with_component(xyk_pool_component)
         .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
         .with_component(BasicWallet)
         .build()
@@ -355,7 +355,7 @@ pub async fn deploy_combined_pool(
         .unwrap();
 
     println!(
-        "Combined pool deployed: lp_local + c_prod_pool => ID: {:?}",
+        "Combined pool deployed: lp_local + xyk_pool => ID: {:?}",
         contract.id().to_hex()
     );
 

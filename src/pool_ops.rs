@@ -22,7 +22,7 @@ pub fn get_pool_library() -> Result<Library> {
     let math_library = get_math_library()?;
     let storage_utils_library = get_storage_utils_library()?;
     let lp_local_library = get_lp_local_library()?;
-    let source = read_masm_to_string("accounts", "c_prod_pool")?;
+    let source = read_masm_to_string("accounts", "xyk_pool")?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(math_library)
@@ -31,7 +31,7 @@ pub fn get_pool_library() -> Result<Library> {
         // .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?
         .with_static_library(lp_local_library)
         .map_err(|e| anyhow!("Failed to add lp_local library to assembler: {e:?}"))?;
-    create_library(assembler, "zoro::c_prod_pool", &source)
+    create_library(assembler, "zoro::xyk_pool", &source)
         .map_err(|e| anyhow!("Failed to compile pool library: {e:?}"))
 }
 
@@ -153,8 +153,7 @@ pub fn compile_pool_tx_script(
     pool_library: &Library,
     procedure_name: &str,
 ) -> Result<TransactionScript> {
-    let source =
-        format!("use zoro::c_prod_pool\nbegin\n    exec.c_prod_pool::{procedure_name}\nend");
+    let source = format!("use zoro::xyk_pool\nbegin\n    exec.xyk_pool::{procedure_name}\nend");
     compile_custom_tx_script(pool_library, &source)
 }
 
@@ -277,8 +276,7 @@ pub fn compile_pool_note_script(
     pool_library: &Library,
     procedure_name: &str,
 ) -> Result<NoteScript> {
-    let source =
-        format!("use.zoro::c_prod_pool\nbegin\n    call.c_prod_pool::{procedure_name}\nend");
+    let source = format!("use.zoro::xyk_pool\nbegin\n    call.xyk_pool::{procedure_name}\nend");
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(pool_library.clone())
@@ -400,14 +398,14 @@ pub fn build_withdraw_note(
     Ok(Note::new(assets, metadata, recipient))
 }
 
-/// Compiles the c_prod_pool library with lp_local, math, and storage_utils as dependencies.
-/// Used when deploying a combined pool (lp_local + c_prod_pool on the same account).
+/// Compiles the xyk_pool library with lp_local, math, and storage_utils as dependencies.
+/// Used when deploying a combined pool (lp_local + xyk_pool on the same account).
 pub fn get_combined_pool_library() -> Result<Library> {
     let math_library = get_math_library()?;
     let storage_utils_library = get_storage_utils_library()?;
     let lp_local_library = get_lp_local_library()?;
 
-    let source = read_masm_to_string("accounts", "c_prod_pool")?;
+    let source = read_masm_to_string("accounts", "xyk_pool")?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(math_library)
@@ -416,28 +414,28 @@ pub fn get_combined_pool_library() -> Result<Library> {
         .map_err(|e| anyhow!("Failed to add storage_utils library: {e:?}"))?
         .with_static_library(lp_local_library)
         .map_err(|e| anyhow!("Failed to add lp_local library: {e:?}"))?;
-    create_library(assembler, "zoro::c_prod_pool", &source)
+    create_library(assembler, "zoro::xyk_pool", &source)
         .map_err(|e| anyhow!("Failed to compile combined pool library: {e:?}"))
 }
 
 /// Compiles the xyk_swap_exact_tokens_for_tokens note script, linked against the combined pool library.
 pub fn compile_xyk_swap_exact_tokens_for_tokens_note_script(
-    c_prod_pool_library: &Library,
+    xyk_pool_library: &Library,
 ) -> Result<NoteScript> {
     let source = read_masm_to_string("notes", "xyk_swap_exact_tokens_for_tokens").map_err(|e| {
         anyhow!("Failed to read xyk_swap_exact_tokens_for_tokens note script: {e:?}")
     })?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
-        .with_static_library(c_prod_pool_library.clone())
-        .map_err(|e| anyhow!("Failed to add c_prod_pool library to assembler: {e:?}"))?;
+        .with_static_library(xyk_pool_library.clone())
+        .map_err(|e| anyhow!("Failed to add xyk_pool library to assembler: {e:?}"))?;
     let program = assembler.assemble_program(source).map_err(|e| {
         anyhow!("Failed to compile xyk_swap_exact_tokens_for_tokens note script: {e:?}")
     })?;
     Ok(NoteScript::new(program))
 }
 
-/// Builds a swap note targeting the combined pool (lp_local + c_prod_pool).
+/// Builds a swap note targeting the combined pool (lp_local + xyk_pool).
 ///
 /// Note inputs layout (12 felts):
 ///   word 0: [0, 0, 0, min_amount_out]          - MIN_ASSET_OUT
@@ -445,7 +443,7 @@ pub fn compile_xyk_swap_exact_tokens_for_tokens_note_script(
 ///   word 2: [r0, r1, r2, r3]                   - RECIPIENT digest
 pub fn build_xyk_swap_exact_tokens_for_tokens_note(
     pool_id: AccountId,
-    c_prod_pool_library: &Library,
+    xyk_pool_library: &Library,
     input_asset: FungibleAsset,
     min_output_asset: FungibleAsset,
     deadline: u64,
@@ -454,7 +452,7 @@ pub fn build_xyk_swap_exact_tokens_for_tokens_note(
     return_note_type: Felt,
     return_recipient_digest: Word,
 ) -> Result<Note> {
-    let script = compile_xyk_swap_exact_tokens_for_tokens_note_script(c_prod_pool_library)?;
+    let script = compile_xyk_swap_exact_tokens_for_tokens_note_script(xyk_pool_library)?;
 
     let inputs = NoteInputs::new(vec![
         min_output_asset.faucet_id().prefix().as_felt(),
@@ -490,22 +488,22 @@ pub fn build_xyk_swap_exact_tokens_for_tokens_note(
 
 /// Compiles the xyk_swap_tokens_for_exact_tokens note script, linked against the combined pool library.
 pub fn compile_xyk_swap_tokens_for_exact_tokens_note_script(
-    c_prod_pool_library: &Library,
+    xyk_pool_library: &Library,
 ) -> Result<NoteScript> {
     let source = read_masm_to_string("notes", "xyk_swap_tokens_for_exact_tokens").map_err(|e| {
         anyhow!("Failed to read xyk_swap_tokens_for_exact_tokens note script: {e:?}")
     })?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
-        .with_static_library(c_prod_pool_library.clone())
-        .map_err(|e| anyhow!("Failed to add c_prod_pool library to assembler: {e:?}"))?;
+        .with_static_library(xyk_pool_library.clone())
+        .map_err(|e| anyhow!("Failed to add xyk_pool library to assembler: {e:?}"))?;
     let program = assembler.assemble_program(source).map_err(|e| {
         anyhow!("Failed to compile xyk_swap_tokens_for_exact_tokens note script: {e:?}")
     })?;
     Ok(NoteScript::new(program))
 }
 
-/// Builds a swap note targeting the combined pool (lp_local + c_prod_pool).
+/// Builds a swap note targeting the combined pool (lp_local + xyk_pool).
 ///
 /// Note inputs layout (12 felts):
 ///   word 0: [aset_out_prefix, aset_out_suffix, 0, amount_out]  - ASSET_OUT (exact output)
@@ -513,7 +511,7 @@ pub fn compile_xyk_swap_tokens_for_exact_tokens_note_script(
 ///   word 2: [r0, r1, r2, r3]                                   - RECIPIENT digest
 pub fn build_xyk_swap_tokens_for_exact_tokens_note(
     pool_id: AccountId,
-    c_prod_pool_library: &Library,
+    xyk_pool_library: &Library,
     max_input_asset: FungibleAsset,
     exact_output_asset: FungibleAsset,
     deadline: u64,
@@ -522,7 +520,7 @@ pub fn build_xyk_swap_tokens_for_exact_tokens_note(
     return_note_type: Felt,
     return_recipient_digest: Word,
 ) -> Result<Note> {
-    let script = compile_xyk_swap_tokens_for_exact_tokens_note_script(c_prod_pool_library)?;
+    let script = compile_xyk_swap_tokens_for_exact_tokens_note_script(xyk_pool_library)?;
 
     let inputs = NoteInputs::new(vec![
         exact_output_asset.faucet_id().prefix().as_felt(),

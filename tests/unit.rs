@@ -1,14 +1,6 @@
 mod test_utils;
 
 use anyhow::Result;
-use c_prod_pool::pool_ops::{
-    build_lp_local_deposit_note, build_xyk_swap_exact_tokens_for_tokens_note,
-    build_xyk_swap_tokens_for_exact_tokens_note, compile_custom_tx_script,
-    compile_lp_local_fuzz_tx_script, compile_storage_fuzz_tx_script, compute_expected_lp,
-    compute_expected_withdraw, get_combined_pool_library, get_lp_local_library, get_math_library,
-    get_pool_library, isqrt,
-};
-use c_prod_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
 use miden_client::{
     Felt, Word,
     account::{AccountId, StorageSlotName},
@@ -18,6 +10,14 @@ use miden_client::{
     transaction::{AdviceInputs, OutputNote, TransactionRequestBuilder},
 };
 use miden_protocol::crypto::rand::Randomizable;
+use xyk_pool::pool_ops::{
+    build_lp_local_deposit_note, build_xyk_swap_exact_tokens_for_tokens_note,
+    build_xyk_swap_tokens_for_exact_tokens_note, compile_custom_tx_script,
+    compile_lp_local_fuzz_tx_script, compile_storage_fuzz_tx_script, compute_expected_lp,
+    compute_expected_withdraw, get_combined_pool_library, get_lp_local_library, get_math_library,
+    get_pool_library, isqrt,
+};
+use xyk_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
 
 use std::{collections::BTreeSet, time::Duration};
 use test_utils::*;
@@ -53,11 +53,11 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
         let amount_in = Felt::new(rng.random_range(min_amount_in..=max_amount_in));
 
         let source = format!(
-            "use zoro::c_prod_pool\n\
+            "use zoro::xyk_pool\n\
              use miden::core::sys\n\
              begin\n\
                  push.{reserve_out}.{reserve_in}.{amount_in}\n\
-                 call.c_prod_pool::get_amount_out_u64\n\
+                 call.xyk_pool::get_amount_out_u64\n\
                  exec.sys::truncate_stack\n\
              end"
         );
@@ -135,11 +135,11 @@ async fn get_amount_in_u64_fuzz_test() -> Result<()> {
         let amount_out = Felt::new(rng.random_range(min_amount_out..=max_amount_out));
 
         let source = format!(
-            "use zoro::c_prod_pool\n\
+            "use zoro::xyk_pool\n\
              use miden::core::sys\n\
              begin\n\
                  push.{reserve_out}.{reserve_in}.{amount_out}\n\
-                 call.c_prod_pool::get_amount_in_u64\n\
+                 call.xyk_pool::get_amount_in_u64\n\
                  exec.sys::truncate_stack\n\
              end"
         );
@@ -1581,8 +1581,8 @@ async fn deposit_happy_path_test() -> Result<()> {
 
 #[tokio::test]
 async fn deposit_initial_underflow_test() -> Result<()> {
-    use c_prod_pool::common::wait_for_note;
     use miden_client::note::NoteTag;
+    use xyk_pool::common::wait_for_note;
 
     let mut setup = setup_lp_local_test_environment().await?;
     setup.maybe_fund_user_wallet(1_000).await?;
@@ -1640,7 +1640,7 @@ async fn deposit_initial_underflow_test() -> Result<()> {
 
 #[tokio::test]
 async fn lp_deposit_withdraw_happy_path_test() -> Result<()> {
-    use c_prod_pool::pool_ops::{build_lp_local_withdraw_note, compute_expected_withdraw};
+    use xyk_pool::pool_ops::{build_lp_local_withdraw_note, compute_expected_withdraw};
 
     let deposit_amount: u64 = 10_000_000;
     let withdraw_amount: u64 = 1_000_000;
@@ -1842,8 +1842,8 @@ async fn lp_deposit_withdraw_happy_path_test() -> Result<()> {
 
 #[tokio::test]
 async fn swap_tokens_for_exact_tokens_happy_path_test() -> Result<()> {
-    use c_prod_pool::pool_ops::get_amount_in;
-    use c_prod_pool::utils::fetch_vault_for_account_from_chain;
+    use xyk_pool::pool_ops::get_amount_in;
+    use xyk_pool::utils::fetch_vault_for_account_from_chain;
 
     let deposit_amount: u64 = 10_000_000;
     let swap_amount_out: u64 = 100_000;
@@ -1851,7 +1851,7 @@ async fn swap_tokens_for_exact_tokens_happy_path_test() -> Result<()> {
     let mut setup = setup_combined_pool_test_environment().await?;
     setup.maybe_fund_user_wallet(deposit_amount * 2).await?;
 
-    let c_prod_pool_lib = get_combined_pool_library()?;
+    let xyk_pool_lib = get_combined_pool_library()?;
     let token0_id = setup.faucets[0].faucet.id();
     let token1_id = setup.faucets[1].faucet.id();
 
@@ -1911,7 +1911,7 @@ async fn swap_tokens_for_exact_tokens_happy_path_test() -> Result<()> {
     let swap_output_asset = FungibleAsset::new(token1_id.clone(), swap_amount_out)?;
     let swap_note = build_xyk_swap_tokens_for_exact_tokens_note(
         setup.contract.id(),
-        &c_prod_pool_lib,
+        &xyk_pool_lib,
         swap_max_input_asset,
         swap_output_asset,
         0,
@@ -2035,8 +2035,8 @@ async fn swap_tokens_for_exact_tokens_happy_path_test() -> Result<()> {
 
 #[tokio::test]
 async fn swap_exact_tokens_for_tokens_happy_path_test() -> Result<()> {
-    use c_prod_pool::pool_ops::get_amount_out;
-    use c_prod_pool::utils::fetch_vault_for_account_from_chain;
+    use xyk_pool::pool_ops::get_amount_out;
+    use xyk_pool::utils::fetch_vault_for_account_from_chain;
 
     let deposit_amount: u64 = 10_000_000;
     let swap_amount_in: u64 = 100_000;
@@ -2044,7 +2044,7 @@ async fn swap_exact_tokens_for_tokens_happy_path_test() -> Result<()> {
     let mut setup = setup_combined_pool_test_environment().await?;
     setup.maybe_fund_user_wallet(deposit_amount * 2).await?;
 
-    let c_prod_pool_lib = get_combined_pool_library()?;
+    let xyk_pool_lib = get_combined_pool_library()?;
     let token0_id = setup.faucets[0].faucet.id();
     let token1_id = setup.faucets[1].faucet.id();
 
@@ -2104,7 +2104,7 @@ async fn swap_exact_tokens_for_tokens_happy_path_test() -> Result<()> {
     let swap_min_output_asset = FungibleAsset::new(token1_id.clone(), expected_out - 5)?;
     let swap_note = build_xyk_swap_exact_tokens_for_tokens_note(
         setup.contract.id(),
-        &c_prod_pool_lib,
+        &xyk_pool_lib,
         swap_input_asset,
         swap_min_output_asset,
         0,

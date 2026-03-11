@@ -1,5 +1,5 @@
 [package]
-name = "c_prod_pool"
+name = "xyk_pool"
 version = "0.4.1"
 edition = "2024"
 license = "GPL-3.0-only"

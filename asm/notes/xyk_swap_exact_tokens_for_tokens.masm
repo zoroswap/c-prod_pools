@@ -1,5 +1,5 @@
 use miden::protocol::active_note
-use zoro::c_prod_pool
+use zoro::xyk_pool
 use miden::core::sys
 
 const EXPECTED_NUM_ASSETS = 1
@@ -37,6 +37,6 @@ begin
     padw mem_loadw_be.40
     # => [ASSET_IN, MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, RECIPIENT_WORD]
 
-    call.c_prod_pool::swap_exact_tokens_for_tokens
+    call.xyk_pool::swap_exact_tokens_for_tokens
     exec.sys::truncate_stack
 end

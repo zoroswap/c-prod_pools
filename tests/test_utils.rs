@@ -1,12 +1,4 @@
 use anyhow::{Result, anyhow};
-use c_prod_pool::common::{
-    CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
-    deploy_c_prod_pool, deploy_combined_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool,
-    deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, fund_wallet,
-    instantiate_simple_client, load_test_state, save_test_state, try_import_account,
-};
-use c_prod_pool::pool_ops::{build_lp_local_deposit_note, get_lp_local_library};
-use c_prod_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
 use miden_client::{
     Felt,
     account::{Account, AccountId},
@@ -18,6 +10,14 @@ use miden_client::{
     transaction::{OutputNote, TransactionRequestBuilder},
 };
 use std::{env, fs, path::PathBuf};
+use xyk_pool::common::{
+    CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
+    deploy_combined_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool,
+    deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, deploy_xyk_pool, fund_wallet,
+    instantiate_simple_client, load_test_state, save_test_state, try_import_account,
+};
+use xyk_pool::pool_ops::{build_lp_local_deposit_note, get_lp_local_library};
+use xyk_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
 
 const DEFAULT_FUND_AMOUNT: u64 = 1_000_000_000_000;
 
@@ -142,8 +142,7 @@ pub async fn lp_local_deposit(
         AccountRecordData::Partial(_) => return Err(anyhow!("Account not found")),
     };
     let storage = acc.storage();
-    let total_supply =
-        storage.get_item(&slot_name("zoro::lp_local::total_supply"))?[0].as_int();
+    let total_supply = storage.get_item(&slot_name("zoro::lp_local::total_supply"))?[0].as_int();
     let reserve = storage.get_item(&slot_name("zoro::lp_local::reserve"))?;
     let vault = acc.vault();
     let pool_balance0 = vault.get_balance(token0_id)?;
@@ -349,7 +348,7 @@ pub async fn setup_lightweight_environment() -> Result<TestSetup> {
     })
 }
 
-/// Full c_prod_pool setup: faucets, user, pool contract, funding.
+/// Full xyk_pool setup: faucets, user, pool contract, funding.
 pub async fn setup_test_environment() -> Result<TestSetup> {
     dotenv::dotenv().ok();
     let (label, endpoint) = resolve_endpoint();
@@ -362,7 +361,7 @@ pub async fn setup_test_environment() -> Result<TestSetup> {
 
     let token0_id = faucets[0].faucet.id();
     let token1_id = faucets[1].faucet.id();
-    let (pool, _) = deploy_c_prod_pool(
+    let (pool, _) = deploy_xyk_pool(
         &mut clients.client,
         keystore.clone(),
         &token0_id,
@@ -478,7 +477,7 @@ pub async fn setup_lp_local_test_environment() -> Result<TestSetup> {
     Ok(setup)
 }
 
-/// Combined pool E2E setup: faucets, user, combined (lp_local + c_prod_pool) contract, funding.
+/// Combined pool E2E setup: faucets, user, combined (lp_local + xyk_pool) contract, funding.
 pub async fn setup_combined_pool_test_environment() -> Result<TestSetup> {
     dotenv::dotenv().ok();
     let (label, endpoint) = resolve_endpoint();
