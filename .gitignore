@@ -3,3 +3,5 @@
 
 .env
 .cursor
+
+.DS_Store
