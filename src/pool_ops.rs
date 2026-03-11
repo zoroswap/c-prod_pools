@@ -420,17 +420,20 @@ pub fn get_combined_pool_library() -> Result<Library> {
         .map_err(|e| anyhow!("Failed to compile combined pool library: {e:?}"))
 }
 
-/// Compiles the xyk_swap note script, linked against the combined pool library.
-pub fn compile_xyk_swap_note_script(c_prod_pool_library: &Library) -> Result<NoteScript> {
-    let source = read_masm_to_string("notes", "xyk_swap")
-        .map_err(|e| anyhow!("Failed to read xyk_swap note script: {e:?}"))?;
+/// Compiles the xyk_swap_exact_tokens_for_tokens note script, linked against the combined pool library.
+pub fn compile_xyk_swap_exact_tokens_for_tokens_note_script(
+    c_prod_pool_library: &Library,
+) -> Result<NoteScript> {
+    let source = read_masm_to_string("notes", "xyk_swap_exact_tokens_for_tokens").map_err(|e| {
+        anyhow!("Failed to read xyk_swap_exact_tokens_for_tokens note script: {e:?}")
+    })?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(c_prod_pool_library.clone())
         .map_err(|e| anyhow!("Failed to add c_prod_pool library to assembler: {e:?}"))?;
-    let program = assembler
-        .assemble_program(source)
-        .map_err(|e| anyhow!("Failed to compile xyk_swap note script: {e:?}"))?;
+    let program = assembler.assemble_program(source).map_err(|e| {
+        anyhow!("Failed to compile xyk_swap_exact_tokens_for_tokens note script: {e:?}")
+    })?;
     Ok(NoteScript::new(program))
 }
 
@@ -440,7 +443,7 @@ pub fn compile_xyk_swap_note_script(c_prod_pool_library: &Library) -> Result<Not
 ///   word 0: [0, 0, 0, min_amount_out]          - MIN_ASSET_OUT
 ///   word 1: [deadline, note_tag, note_type, 0]  - scalars
 ///   word 2: [r0, r1, r2, r3]                   - RECIPIENT digest
-pub fn build_xyk_swap_note(
+pub fn build_xyk_swap_exact_tokens_for_tokens_note(
     pool_id: AccountId,
     c_prod_pool_library: &Library,
     input_asset: FungibleAsset,
@@ -451,7 +454,7 @@ pub fn build_xyk_swap_note(
     return_note_type: Felt,
     return_recipient_digest: Word,
 ) -> Result<Note> {
-    let script = compile_xyk_swap_note_script(c_prod_pool_library)?;
+    let script = compile_xyk_swap_exact_tokens_for_tokens_note_script(c_prod_pool_library)?;
 
     let inputs = NoteInputs::new(vec![
         min_output_asset.faucet_id().prefix().as_felt(),
@@ -469,6 +472,74 @@ pub fn build_xyk_swap_note(
     ])?;
 
     let assets = NoteAssets::new(vec![input_asset.into()])?;
+
+    let tag = NoteTag::with_account_target(pool_id);
+    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
+
+    let mut seed = [0; 32];
+    let mut std_rng = StdRng::from_os_rng();
+    std_rng.fill(&mut seed);
+    let mut rng = StdRng::from_seed(seed);
+    let mut seed = [0u8; 32];
+    rng.fill(&mut seed);
+    let serial_num =
+        Word::from_random_bytes(&seed).ok_or(anyhow!("Error generating random serial number"))?;
+    let recipient = NoteRecipient::new(serial_num, script, inputs);
+    Ok(Note::new(assets, metadata, recipient))
+}
+
+/// Compiles the xyk_swap_tokens_for_exact_tokens note script, linked against the combined pool library.
+pub fn compile_xyk_swap_tokens_for_exact_tokens_note_script(
+    c_prod_pool_library: &Library,
+) -> Result<NoteScript> {
+    let source = read_masm_to_string("notes", "xyk_swap_tokens_for_exact_tokens").map_err(|e| {
+        anyhow!("Failed to read xyk_swap_tokens_for_exact_tokens note script: {e:?}")
+    })?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(c_prod_pool_library.clone())
+        .map_err(|e| anyhow!("Failed to add c_prod_pool library to assembler: {e:?}"))?;
+    let program = assembler.assemble_program(source).map_err(|e| {
+        anyhow!("Failed to compile xyk_swap_tokens_for_exact_tokens note script: {e:?}")
+    })?;
+    Ok(NoteScript::new(program))
+}
+
+/// Builds a swap note targeting the combined pool (lp_local + c_prod_pool).
+///
+/// Note inputs layout (12 felts):
+///   word 0: [aset_out_prefix, aset_out_suffix, 0, amount_out]  - ASSET_OUT (exact output)
+///   word 1: [deadline, note_tag, note_type, 0]                  - scalars
+///   word 2: [r0, r1, r2, r3]                                   - RECIPIENT digest
+pub fn build_xyk_swap_tokens_for_exact_tokens_note(
+    pool_id: AccountId,
+    c_prod_pool_library: &Library,
+    max_input_asset: FungibleAsset,
+    exact_output_asset: FungibleAsset,
+    deadline: u64,
+    sender: AccountId,
+    return_note_tag: Felt,
+    return_note_type: Felt,
+    return_recipient_digest: Word,
+) -> Result<Note> {
+    let script = compile_xyk_swap_tokens_for_exact_tokens_note_script(c_prod_pool_library)?;
+
+    let inputs = NoteInputs::new(vec![
+        exact_output_asset.faucet_id().prefix().as_felt(),
+        exact_output_asset.faucet_id().suffix().into(),
+        Felt::ZERO,
+        Felt::new(exact_output_asset.amount()),
+        Felt::new(deadline),
+        return_note_tag,
+        return_note_type,
+        Felt::ZERO,
+        return_recipient_digest[0],
+        return_recipient_digest[1],
+        return_recipient_digest[2],
+        return_recipient_digest[3],
+    ])?;
+
+    let assets = NoteAssets::new(vec![max_input_asset.into()])?;
 
     let tag = NoteTag::with_account_target(pool_id);
     let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
@@ -520,10 +591,18 @@ pub fn compute_expected_withdraw(
 }
 
 /// Expected output amount for a swap (0.3% fee).
-pub fn compute_swap_output(amount_in: u64, reserve_in: u64, reserve_out: u64) -> u64 {
+pub fn get_amount_out(amount_in: u64, reserve_in: u64, reserve_out: u64) -> u64 {
     let fee_adjusted = amount_in as u128 * 997;
     let numerator = reserve_out as u128 * fee_adjusted;
     let denominator = reserve_in as u128 * 1000 + fee_adjusted;
+    (numerator / denominator) as u64
+}
+
+/// Expected input amount for a swap (0.3% fee).
+pub fn get_amount_in(amount_out: u64, reserve_in: u64, reserve_out: u64) -> u64 {
+    let amount_out_scaled = amount_out as u128 * 1000;
+    let numerator = reserve_in as u128 * amount_out_scaled;
+    let denominator = (reserve_out as u128 - amount_out as u128) * 997;
     (numerator / denominator) as u64
 }
 
@@ -557,7 +636,7 @@ mod tests {
 
     // #[test]
     fn test_swap_output() {
-        let out = compute_swap_output(1_000, 50_000, 50_000);
+        let out = get_amount_out(1_000, 50_000, 50_000);
         assert!(out > 970 && out < 1000, "out={out}");
     }
 

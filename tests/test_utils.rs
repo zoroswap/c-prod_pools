@@ -5,12 +5,17 @@ use c_prod_pool::common::{
     deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, fund_wallet,
     instantiate_simple_client, load_test_state, save_test_state, try_import_account,
 };
-use c_prod_pool::utils::fetch_vault_for_account_from_chain;
+use c_prod_pool::pool_ops::{build_lp_local_deposit_note, get_lp_local_library};
+use c_prod_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
 use miden_client::{
     Felt,
     account::{Account, AccountId},
+    asset::FungibleAsset,
     keystore::FilesystemKeyStore,
+    note::NoteTag,
     rpc::Endpoint,
+    store::AccountRecordData,
+    transaction::{OutputNote, TransactionRequestBuilder},
 };
 use std::{env, fs, path::PathBuf};
 
@@ -70,6 +75,87 @@ impl TestSetup {
         }
         Ok(())
     }
+}
+
+/// Pool state after deposit: total_supply, reserve0, reserve1, pool_balance0, pool_balance1.
+pub struct PoolState {
+    pub total_supply: u64,
+    pub reserve0: u64,
+    pub reserve1: u64,
+    pub pool_balance0: u64,
+    pub pool_balance1: u64,
+}
+
+/// Performs an lp_local deposit and returns pool state.
+pub async fn lp_local_deposit(
+    setup: &mut TestSetup,
+    token0_amount: u64,
+    token1_amount: u64,
+    sender: AccountId,
+) -> Result<PoolState> {
+    let lp_lib = get_lp_local_library()?;
+    let token0_id = setup.faucets[0].faucet.id();
+    let token1_id = setup.faucets[1].faucet.id();
+    let token0_asset = FungibleAsset::new(token0_id.clone(), token0_amount)?;
+    let token1_asset = FungibleAsset::new(token1_id.clone(), token1_amount)?;
+
+    let deposit_note = build_lp_local_deposit_note(
+        setup.contract.id(),
+        &lp_lib,
+        token0_asset,
+        token1_asset,
+        sender,
+        sender,
+    )?;
+
+    let pool_tag = NoteTag::with_account_target(setup.contract.id());
+    setup.clients.client.add_note_tag(pool_tag).await?;
+
+    let create_req = TransactionRequestBuilder::new()
+        .own_output_notes([OutputNote::Full(deposit_note.clone())])
+        .build()?;
+    setup
+        .clients
+        .client
+        .submit_new_transaction(sender, create_req)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    let consume_req = TransactionRequestBuilder::new()
+        .input_notes([(deposit_note.clone(), None)])
+        .build()?;
+    setup
+        .clients
+        .client
+        .submit_new_transaction(setup.contract.id(), consume_req)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    let acc = setup
+        .clients
+        .client
+        .get_account(setup.contract.id().clone())
+        .await?
+        .unwrap();
+    let acc = match acc.account_data() {
+        AccountRecordData::Full(a) => a,
+        AccountRecordData::Partial(_) => return Err(anyhow!("Account not found")),
+    };
+    let storage = acc.storage();
+    let total_supply =
+        storage.get_item(&slot_name("zoro::lp_local::total_supply"))?[0].as_int();
+    let reserve = storage.get_item(&slot_name("zoro::lp_local::reserve"))?;
+    let vault = acc.vault();
+    let pool_balance0 = vault.get_balance(token0_id)?;
+    let pool_balance1 = vault.get_balance(token1_id)?;
+
+    Ok(PoolState {
+        total_supply,
+        reserve0: reserve[0].as_int(),
+        reserve1: reserve[1].as_int(),
+        pool_balance0,
+        pool_balance1,
+    })
 }
 
 // ---------------------------------------------------------------------------

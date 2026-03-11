@@ -147,7 +147,7 @@ end
 pub proc swap_exact_tokens_for_tokens(asset_in: word, min_asset_out: word, deadline: felt, note_tag: felt, note_type: felt, return_note_recipient: word) -> felt
     # loc.0: deadline
     # loc.1: amount_out
-    ### localy store asset in, min asset out, and deadline
+    ### mem store asset in, min asset out
     mem_storew_le.ASSET_IN_WORD dropw mem_storew_le.ASSET_OUT_WORD dropw 
     ### localy store deadline
     loc_store.0 
@@ -167,6 +167,8 @@ pub proc swap_exact_tokens_for_tokens(asset_in: word, min_asset_out: word, deadl
     # => [min_amount_out, amount_out]
     gte
     if.true # sufficient amount out
+        ### update amount_out
+        loc_load.1 mem_store.AMOUNT_OUT
         ### set asset out to be sent to user
         padw mem_loadw_le.ASSET_OUT_WORD
         mem_storew_le.RETURN_NOTE_ASSET_WORD dropw
@@ -190,17 +192,86 @@ pub proc swap_exact_tokens_for_tokens(asset_in: word, min_asset_out: word, deadl
         mem_storew_le.RETURN_NOTE_ASSET_WORD dropw
     end
     exec._create_p2id_note
+    # => [note_id]
+    drop
+    # => []
+end
 
-    exec.sys::truncate_stack
+@locals(3)
+pub proc swap_tokens_for_exact_tokens(asset_out: word, max_asset_in: word, deadline: felt, note_tag: felt, note_type: felt, return_note_recipient: word) -> felt
+    # loc.0: deadline
+    # loc.1: amount_in
+    # loc.2: remaining_amount_in
+    ### mem store  asset out, max asset in
+    mem_storew_le.ASSET_OUT_WORD dropw mem_storew_le.ASSET_IN_WORD dropw 
+    ### localy store deadline
+    loc_store.0 
+    ### store note metadata in memory
+    mem_store.RETURN_NOTE_TAG mem_store.RETURN_NOTE_TYPE mem_storew_le.RETURN_NOTE_RECIPIENT_WORD dropw
+    mem_load.ASSET_OUT_ID_SUFFIX mem_load.ASSET_OUT_ID_PREFIX 
+    exec.get_reserve_by_asset_id
+    # => [reserve_out]
+    mem_load.ASSET_IN_ID_SUFFIX mem_load.ASSET_IN_ID_PREFIX 
+    exec.get_reserve_by_asset_id
+    # => [reserve_in, reserve_out]
+    mem_load.AMOUNT_OUT
+    # => [amount_out, reserve_in, reserve_out]
+    exec.get_amount_in_u64 loc_store.1 loc_load.1
+    # => [amount_in]
+    mem_load.AMOUNT_IN
+    # => [max_amount_in, amount_in]
+    lte
+    if.true # acceptable amount in
+        ### loc store remaining amount in
+        mem_load.AMOUNT_IN loc_load.1 sub
+        # => [remaining_amount_in]
+        loc_store.2
+        # => []
+        ### update amount_in
+        loc_load.1 mem_store.AMOUNT_IN
+        ### set asset out to be sent to user
+        padw mem_loadw_le.ASSET_OUT_WORD
+        mem_storew_le.RETURN_NOTE_ASSET_WORD dropw
+        ### add ASSEET IN to the pool
+        padw mem_loadw_le.ASSET_IN_WORD
+        exec.native_account::add_asset dropw
+        # => []
+        ### update reserve
+        padw mem_loadw_le.ASSET_OUT_WORD
+        # => [asset_out_id_prefix, asset_out_id_suffix, 0, amount_out]
+        movup.3
+        # => [amount_out, asset_out_id_prefix, asset_out_id_suffix]
+        exec.sub_from_reserve_by_asset_id
+        padw mem_loadw_le.ASSET_IN_WORD  movup.3
+        # => [amount_in, asset_in_id_prefix, asset_in_id_suffix]
+        exec.add_to_reserve_by_asset_id
+        # => []
+    else # insufficient amount out
+        ### send asset in back to user
+        padw mem_loadw_le.ASSET_IN_WORD
+        mem_storew_le.RETURN_NOTE_ASSET_WORD dropw
+    end
+    exec._create_p2id_note
+    # => [note_id]
+    ### add remaining amount in to the note to be returned to the user
+    padw mem_loadw_le.ASSET_IN_WORD
+    # => [ASSET_IN, note_id]
+    loc_load.2
+    # => [remaining_amount_in, ASSET_IN, note_id]
+    swap.4 drop
+    # => [REMAINING_ASSET_IN, note_id]
+    exec.output_note::add_asset
+    # => [note_id]
+    drop
 end
 
 
 #### HELPER PROCEDURES
 @locals(1)
-proc _create_p2id_note()
+proc _create_p2id_note() -> felt
     # loc.0: note_id
     padw mem_loadw_le.RETURN_NOTE_RECIPIENT_WORD  mem_load.RETURN_NOTE_TYPE mem_load.RETURN_NOTE_TAG
-    exec.output_note::create loc_store.0 # @todo maybe don't even store at local
+    exec.output_note::create loc_store.0 
     # => []
 
     padw mem_loadw_le.RETURN_NOTE_ASSET_WORD
@@ -208,5 +279,9 @@ proc _create_p2id_note()
     # => [ASSET]
     loc_load.0 movdn.4
     # => [ASSET1_OUT, note_id]
-    exec.output_note:: add_asset
+    exec.output_note::add_asset
+    # => [note_id]
+    loc_load.0
+    # => [note_id]
+    exec.sys::truncate_stack
 end
