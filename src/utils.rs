@@ -1,4 +1,4 @@
-use miden_protocol::account::StorageSlotName;
+use miden_protocol::{account::StorageSlotName, crypto::rand::Randomizable};
 
 use std::{fs, path::PathBuf, sync::Arc};
 
@@ -7,6 +7,7 @@ use miden_client::assembly::{
     Assembler, DefaultSourceManager, Module, ModuleKind, Path as AssemblyPath,
 };
 use miden_client::{
+    Felt, Word,
     account::{Account, AccountId},
     asset::AssetVault,
     note::Note,
@@ -69,4 +70,14 @@ pub fn read_masm_to_string(kind: &str, name: &str) -> Result<String> {
         .iter()
         .collect();
     fs::read_to_string(&path).map_err(|e| anyhow!("Failed to read {path:?}: {e}"))
+}
+
+pub fn get_p2id_root_hash() -> Word {
+    [
+        Felt::new(13362761878458161062),
+        Felt::new(15090726097241769395),
+        Felt::new(444910447169617901),
+        Felt::new(3558201871398422326),
+    ]
+    .into()
 }

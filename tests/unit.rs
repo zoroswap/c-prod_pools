@@ -5,6 +5,7 @@ use miden_client::{
     Felt, Word,
     account::{AccountId, StorageSlotName},
     asset::FungibleAsset,
+    crypto::FeltRng,
     note::{NoteAttachment, NoteTag, NoteType, build_p2id_recipient, create_p2id_note},
     store::{AccountRecord, AccountRecordData},
     transaction::{AdviceInputs, OutputNote, TransactionRequestBuilder},
@@ -1708,6 +1709,7 @@ async fn deposit_initial_underflow_test() -> Result<()> {
 
 #[tokio::test]
 async fn lp_deposit_withdraw_happy_path_test() -> Result<()> {
+    use xyk_pool::common::get_return_note_serial;
     use xyk_pool::pool_ops::{build_lp_local_withdraw_note, compute_expected_withdraw};
 
     let deposit_amount: u64 = 10_000_000;
@@ -1789,13 +1791,12 @@ async fn lp_deposit_withdraw_happy_path_test() -> Result<()> {
     assert!(r0 > 0, "reserve0 should be > 0 after deposit");
     assert!(r1 > 0, "reserve1 should be > 0 after deposit");
 
+    let withdraw_note_serial_num = setup.clients.client.rng().draw_word();
     // ── Step 2: Build and submit the withdraw note ──
     // Return note params are placeholders; withdraw currently doesn't create the output note.
     let return_note_tag = NoteTag::with_account_target(setup.user.id());
     let return_note_type = NoteType::Public;
-    let return_note_serial_num = Word::from_random_bytes(&[0; 32]).unwrap();
-    let return_note_recipient =
-        build_p2id_recipient(setup.user.id(), return_note_serial_num).unwrap();
+
     let withdraw_note = build_lp_local_withdraw_note(
         setup.contract.id(),
         &lp_lib,
@@ -1803,7 +1804,7 @@ async fn lp_deposit_withdraw_happy_path_test() -> Result<()> {
         setup.user.id(),
         return_note_tag.into(),
         return_note_type.into(),
-        return_note_recipient.digest(),
+        withdraw_note_serial_num,
     )?;
 
     let create_req = TransactionRequestBuilder::new()
@@ -1816,6 +1817,9 @@ async fn lp_deposit_withdraw_happy_path_test() -> Result<()> {
         .await?;
     setup.clients.client.sync_state().await?;
 
+    let return_note_serial_num = get_return_note_serial(withdraw_note_serial_num, setup.user.id());
+    let return_note_recipient =
+        build_p2id_recipient(setup.user.id(), return_note_serial_num).unwrap();
     let consume_req = TransactionRequestBuilder::new()
         .input_notes([(withdraw_note.clone(), None)])
         .expected_output_recipients(vec![return_note_recipient])

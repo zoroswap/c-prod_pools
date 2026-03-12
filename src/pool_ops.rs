@@ -1,4 +1,4 @@
-use crate::utils::{create_library, read_masm_to_string};
+use crate::utils::{create_library, get_p2id_root_hash, read_masm_to_string};
 use anyhow::{Result, anyhow};
 use miden_client::{
     Felt, Word,
@@ -235,8 +235,9 @@ pub fn build_lp_local_withdraw_note(
     sender: AccountId,
     return_note_tag: Felt,
     return_note_type: Felt,
-    return_recipient_digest: Word,
+    withdraw_note_serial: Word,
 ) -> Result<Note> {
+    let return_note_root_hash = get_p2id_root_hash();
     let script = compile_lp_local_withdraw_note_script(lp_local_library)?;
 
     let inputs = NoteInputs::new(vec![
@@ -248,10 +249,10 @@ pub fn build_lp_local_withdraw_note(
         return_note_type,
         Felt::ZERO,
         Felt::ZERO,
-        return_recipient_digest[0],
-        return_recipient_digest[1],
-        return_recipient_digest[2],
-        return_recipient_digest[3],
+        return_note_root_hash[0],
+        return_note_root_hash[1],
+        return_note_root_hash[2],
+        return_note_root_hash[3],
     ])?;
 
     let assets = NoteAssets::new(vec![])?;
@@ -259,15 +260,7 @@ pub fn build_lp_local_withdraw_note(
     let tag = NoteTag::with_account_target(pool_id);
     let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
 
-    let mut seed = [0; 32];
-    let mut std_rng = StdRng::from_os_rng();
-    std_rng.fill(&mut seed);
-    let mut rng = StdRng::from_seed(seed);
-    let mut seed = [0u8; 32];
-    rng.fill(&mut seed);
-    let serial_num = Word::from_random_bytes(&seed)
-        .ok_or(anyhow!("Error generating new word, no word was produced"))?;
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
+    let recipient = NoteRecipient::new(withdraw_note_serial, script, inputs);
     Ok(Note::new(assets, metadata, recipient))
 }
 

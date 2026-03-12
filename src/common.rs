@@ -22,7 +22,10 @@ use miden_standards::account::{faucets::BasicFungibleFaucet, wallets::BasicWalle
 use rand::RngCore;
 
 use miden_client_sqlite_store::{ClientBuilderSqliteExt, SqliteStore};
-use miden_protocol::{account::AccountComponent, transaction::TransactionKernel};
+use miden_protocol::{
+    FieldElement, account::AccountComponent, crypto::hash::rpo::Rpo256,
+    transaction::TransactionKernel,
+};
 
 use miden_standards::code_builder::CodeBuilder;
 use miden_standards::note::utils::build_p2id_recipient;
@@ -763,4 +766,15 @@ pub async fn wait_for_note(client: &mut MidenClient, expected: &Note) -> Result<
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
     Ok(())
+}
+
+pub fn get_return_note_serial(input_note_serial: Word, user_id: AccountId) -> Word {
+    let user_id_word = Word::new([
+        user_id.prefix().as_felt(),
+        user_id.suffix(),
+        Felt::ZERO,
+        Felt::ZERO,
+    ]);
+
+    Rpo256::merge(&[user_id_word, input_note_serial])
 }
