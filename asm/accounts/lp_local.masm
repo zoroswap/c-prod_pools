@@ -438,8 +438,8 @@ end
 #! Outputs: [amount_0_out, amount_1_out]
 #!
 @locals(6)
-#pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, note_tag: felt, note_type: felt, return_note_recipient: word) -> (felt, felt)
 pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, note_tag: felt, note_type: felt, output_note_root: word, input_note_serial: word) -> (felt, felt)
+    debug.stack.24
 
     # loc.0: LP_AMOUNT  = EMPTY, EMPTY, EMPTY, LP_AMOUNT loc.3 lp_amount
     # loc.4: amount_0_out
@@ -514,14 +514,11 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     ##### compute recipient hash
     padw mem_loadw_le.OUTPUT_NOTE_ROOT_HASH exec.compute_return_note_serial_num
     # => [WITHDRAW_SERIAL_NUM, OUTPUT_NOTE_ROOT_HASH]
-    # debug.stack.1
-    # exec.build_p2id_recipient_hash
-    # debug.stack.2
-    # => [P2ID_RECIPIENT]
+
     mem_load.USER_ACCOUNT_ID_SUFFIX mem_store.0
     mem_load.USER_ACCOUNT_ID_PREFIX mem_store.1
 #
-    push.2 push.0 #push.USER_ACCOUNT_ID_WORD
+    push.2 push.0
     ## => [inputs_ptr, number_of_inputs, WITHDRAW_SERIAL_NUM, OUTPUT_NOTE_ROOT_HASH]
     exec.note::build_recipient
     # => [RECIPIENT]
@@ -559,41 +556,7 @@ end
 
 proc compute_return_note_serial_num() -> word
     padw mem_loadw_le.INPUT_NOTE_SERIAL
-    #mem_load.USER_ACCOUNT_ID_SUFFIX mem_load.USER_ACCOUNT_ID_PREFIX push.0.0
-    # => [user_id_prefix, user_id_suffix, 0, 0, INPUT_NOTE_SERIAL]
-
-    #exec.rpo256::merge
+    # => [INPUT_NOTE_SERIAL]
     add.1
     # => [SERIAL_NUM]
-end
-
-
-proc build_p2id_recipient_hash
-
-    padw hmerge
-    # => [SERIAL_NUM_HASH, SCRIPT_HASH]
-    swapw hmerge
-    # => [SERIAL_SCRIPT_HASH]
-
-    # Compute inputs commitment: hash_elements([suffix, prefix])
-    # Must match build_p2id_recipient() from miden_standards which internally
-    # computes NoteInputs::new(vec![suffix, prefix]).commitment() via
-    # Rpo256::hash_elements(&[suffix, prefix])
-    #
-    # mem_storew_le stores in little-endian: stack[0]→pos0, stack[1]→pos1, etc.
-    # hash_elements (via mem_stream) reads pos0 first → rate[0], pos1 → rate[1]
-    # So we need suffix on top (it goes to pos0) and prefix below (pos1)
-
-    push.0.0
-    mem_load.USER_ACCOUNT_ID_PREFIX mem_load.USER_ACCOUNT_ID_SUFFIX
-
-    push.4000 mem_storew_le dropw
-    # => mem[4000] pos0=suffix, pos1=prefix (LE), stack=[SERIAL_SCRIPT_HASH]
-
-    push.2.4000
-    # => [ptr=4000, num_elements=2, SERIAL_SCRIPT_HASH]
-    exec.rpo256::hash_elements
-    # => [INPUTS_COMMITMENT, SERIAL_SCRIPT_HASH]
-    hmerge
-    # => [P2ID_RECIPIENT]
 end

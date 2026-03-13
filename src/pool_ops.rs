@@ -443,23 +443,22 @@ pub fn build_xyk_swap_exact_tokens_for_tokens_note(
     sender: AccountId,
     return_note_tag: Felt,
     return_note_type: Felt,
-    return_recipient_digest: Word,
 ) -> Result<Note> {
     let script = compile_xyk_swap_exact_tokens_for_tokens_note_script(xyk_pool_library)?;
-
+    let p2id_root = get_p2id_root_hash();
     let inputs = NoteInputs::new(vec![
         min_output_asset.faucet_id().prefix().as_felt(),
-        min_output_asset.faucet_id().suffix().into(),
+        min_output_asset.faucet_id().suffix(),
         Felt::ZERO,
         Felt::new(min_output_asset.amount()),
         Felt::new(deadline),
         return_note_tag,
         return_note_type,
         Felt::ZERO,
-        return_recipient_digest[0],
-        return_recipient_digest[1],
-        return_recipient_digest[2],
-        return_recipient_digest[3],
+        p2id_root[0],
+        p2id_root[1],
+        p2id_root[2],
+        p2id_root[3],
     ])?;
 
     let assets = NoteAssets::new(vec![input_asset.into()])?;

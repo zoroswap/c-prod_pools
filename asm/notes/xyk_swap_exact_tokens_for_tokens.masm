@@ -8,34 +8,43 @@ const ERR_INVALID_NUM_ASSETS = "Expected exactly 1 asset for swap"
 #! Note inputs layout (12 felts stored at dest_ptr=0):
 #!   mem[0..3]  = [0, 0, 0, min_amount_out]     → MIN_ASSET_OUT word
 #!   mem[4..7]  = [deadline, note_tag, note_type, 0]
-#!   mem[8..11] = [r0, r1, r2, r3]              → RECIPIENT digest
+#!   mem[8..11] = [r0, r1, r2, r3]              → P2ID_SCRIPT_ROOT
 
 begin
     exec.active_note::get_inputs
     # => [num_inputs, dest_ptr]
     drop drop
 
-    # Push RECIPIENT word (mem[8..11])
+    # Push P2ID_SCRIPT_ROOT word (mem[8..11])
     padw mem_loadw_be.8
-    # => [RECIPIENT_WORD]
+    # => [P2ID_SCRIPT_ROOT]
 
     # Push note_type, note_tag, deadline
     mem_load.6 mem_load.5 mem_load.4
-    # => [deadline, note_tag, note_type, RECIPIENT_WORD]
+    # => [deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
 
     # Push MIN_ASSET_OUT word (mem[0..3])
     padw mem_loadw_le.0
-    # => [MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, RECIPIENT_WORD]
+    # => [MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
 
     # Load note asset to memory at ptr=40
     push.40 exec.active_note::get_assets
     # => [num_assets, 40, ...]
     swap drop
     push.EXPECTED_NUM_ASSETS eq assert.err=ERR_INVALID_NUM_ASSETS
+    # => [MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
 
     # Load ASSET_IN word
     padw mem_loadw_be.40
-    # => [ASSET_IN, MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, RECIPIENT_WORD]
+    # => [ASSET_IN, MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
+
+    # load user_id (sender)
+    exec.active_note::get_sender
+    # => [sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
+
+    # get SERIAL of this note
+    exec.active_note::get_serial_number
+    # => [serial_num, sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
 
     call.xyk_pool::swap_exact_tokens_for_tokens
     exec.sys::truncate_stack
