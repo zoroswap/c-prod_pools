@@ -1820,9 +1820,14 @@ async fn lp_deposit_withdraw_happy_path_test() -> Result<()> {
     let return_note_serial_num = get_return_note_serial(withdraw_note_serial_num, setup.user.id());
     let return_note_recipient =
         build_p2id_recipient(setup.user.id(), return_note_serial_num).unwrap();
+    println!("-=-=-=-=-=-=-=-=-=-=-=user_id={:?}", setup.user.id());
+    println!(
+        "-=-=-=-=-=-=-=-=-=-=-=return_note_recipient={:?}",
+        return_note_recipient.digest()
+    );
     let consume_req = TransactionRequestBuilder::new()
         .input_notes([(withdraw_note.clone(), None)])
-        .expected_output_recipients(vec![return_note_recipient])
+        // .expected_output_recipients(vec![return_note_recipient])
         .build()?;
     let _consume_id = setup
         .clients

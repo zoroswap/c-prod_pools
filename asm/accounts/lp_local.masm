@@ -1,4 +1,5 @@
 use miden::core::math::u64
+use miden::core::crypto::hashes::rpo256
 use miden::protocol::note
 use miden::protocol::native_account
 use miden::protocol::active_account
@@ -12,7 +13,8 @@ use zoro::storage_utils
 const MINIMUM_LIQUIDITY = 100
 
 ### MEMORY LOCATIONS
-const DYNAMIC_PROC_ADDR = 4
+const SCRATCH_SPACE = 0
+const DYNAMIC_PROC_ADDR = 16
 
 const USER_ACCOUNT_ID_WORD = 20
 const USER_ACCOUNT_ID_PREFIX = 20
@@ -510,11 +512,18 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
  
     loc_store.0 loc_store.1
     ##### compute recipient hash
-    padw mem_loadw_le.OUTPUT_NOTE_ROOT_HASH  exec.compute_return_note_serial_num
+    padw mem_loadw_le.OUTPUT_NOTE_ROOT_HASH exec.compute_return_note_serial_num
     # => [WITHDRAW_SERIAL_NUM, OUTPUT_NOTE_ROOT_HASH]
-    push.2 push.USER_ACCOUNT_ID_WORD
-    # => [inputs_ptr, number_of_inputs, WITHDRAW_SERIAL_NUM, OUTPUT_NOTE_ROOT_HASH]
-    exec.note::build_recipient
+    debug.stack.1
+    exec.build_p2id_recipient_hash
+    debug.stack.2
+    # => [P2ID_RECIPIENT]
+    #mem_load.USER_ACCOUNT_ID_SUFFIX mem_store.0
+    #mem_load.USER_ACCOUNT_ID_PREFIX mem_store.1
+#
+    #push.2 push.0 #push.USER_ACCOUNT_ID_WORD
+    ## => [inputs_ptr, number_of_inputs, WITHDRAW_SERIAL_NUM, OUTPUT_NOTE_ROOT_HASH]
+    #exec.note::build_recipient
     # => [RECIPIENT]
     mem_load.NOTE_TYPE mem_load.NOTE_TAG
     # => [note_type, note_tag, RECIPIENT]
@@ -529,7 +538,7 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     push.0 movdn.2 loc_load.1 movdn.3 
     # => [ASSET1_OUT]
     exec.native_account::remove_asset 
-    # => [ASSET1_OUT]
+    # => [ASSET1_uOUT]
     loc_load.2 movdn.4
     # => [ASSET1_OUT, note_id]
     exec.output_note::add_asset
@@ -543,17 +552,48 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     loc_load.2 movdn.4
     # => [ASSET0_OUT, note_id]
     exec.output_note::add_asset
-    
+    debug.stack.1
     # => []
 end
 
 
 proc compute_return_note_serial_num() -> word
-    mem_loadw_le.INPUT_NOTE_SERIAL
-    mem_load.USER_ACCOUNT_ID_SUFFIX mem_load.USER_ACCOUNT_ID_PREFIX push.0.0
+    padw mem_loadw_le.INPUT_NOTE_SERIAL
+    #mem_load.USER_ACCOUNT_ID_SUFFIX mem_load.USER_ACCOUNT_ID_PREFIX push.0.0
     # => [user_id_prefix, user_id_suffix, 0, 0, INPUT_NOTE_SERIAL]
 
-    exec.rpo256::merge
+    #exec.rpo256::merge
+    add.1
     # => [SERIAL_NUM]
 end
 
+
+proc build_p2id_recipient_hash
+
+    padw hmerge
+    # => [SERIAL_NUM_HASH, SCRIPT_HASH]
+    swapw hmerge
+    # => [SERIAL_SCRIPT_HASH]
+
+    # Compute inputs commitment: hash_elements([suffix, prefix])
+    # Must match build_p2id_recipient() from miden_standards which internally
+    # computes NoteInputs::new(vec![suffix, prefix]).commitment() via
+    # Rpo256::hash_elements(&[suffix, prefix])
+    #
+    # mem_storew_le stores in little-endian: stack[0]→pos0, stack[1]→pos1, etc.
+    # hash_elements (via mem_stream) reads pos0 first → rate[0], pos1 → rate[1]
+    # So we need suffix on top (it goes to pos0) and prefix below (pos1)
+
+    push.0.0
+    mem_load.USER_ACCOUNT_ID_PREFIX mem_load.USER_ACCOUNT_ID_SUFFIX
+
+    push.4000 mem_storew_le dropw
+    # => mem[4000] pos0=suffix, pos1=prefix (LE), stack=[SERIAL_SCRIPT_HASH]
+
+    push.2.4000
+    # => [ptr=4000, num_elements=2, SERIAL_SCRIPT_HASH]
+    exec.rpo256::hash_elements
+    # => [INPUTS_COMMITMENT, SERIAL_SCRIPT_HASH]
+    hmerge
+    # => [P2ID_RECIPIENT]
+end

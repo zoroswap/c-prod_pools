@@ -1,3 +1,4 @@
+use miden_client::note::WellKnownNote;
 use miden_protocol::{account::StorageSlotName, crypto::rand::Randomizable};
 
 use std::{fs, path::PathBuf, sync::Arc};
@@ -73,11 +74,17 @@ pub fn read_masm_to_string(kind: &str, name: &str) -> Result<String> {
 }
 
 pub fn get_p2id_root_hash() -> Word {
-    [
-        Felt::new(13362761878458161062),
-        Felt::new(15090726097241769395),
-        Felt::new(444910447169617901),
-        Felt::new(3558201871398422326),
-    ]
-    .into()
+    // [
+    //     Felt::new(13362761878458161062),
+    //     Felt::new(15090726097241769395),
+    //     Felt::new(444910447169617901),
+    //     Felt::new(3558201871398422326),
+    //     // Felt::new(3558201871398422326),
+    //     // Felt::new(444910447169617901),
+    //     // Felt::new(15090726097241769395),
+    //     // Felt::new(13362761878458161062),
+    // ]
+    // .into()
+    println!("P2ID script root: {:?}", WellKnownNote::P2ID.script_root());
+    WellKnownNote::P2ID.script_root()
 }

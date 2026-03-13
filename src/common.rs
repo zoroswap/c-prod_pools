@@ -6,7 +6,7 @@ use miden_client::{
         StorageSlot, StorageSlotName,
     },
     asset::{AssetVault, FungibleAsset, TokenSymbol},
-    auth::{AuthFalcon512Rpo, AuthSecretKey},
+    auth::{AuthFalcon512Rpo, AuthSecretKey, NoAuth},
     builder::ClientBuilder,
     keystore::FilesystemKeyStore,
     note::{
@@ -769,12 +769,28 @@ pub async fn wait_for_note(client: &mut MidenClient, expected: &Note) -> Result<
 }
 
 pub fn get_return_note_serial(input_note_serial: Word, user_id: AccountId) -> Word {
-    let user_id_word = Word::new([
-        user_id.prefix().as_felt(),
-        user_id.suffix(),
-        Felt::ZERO,
-        Felt::ZERO,
-    ]);
+    // let user_id_word = Word::new([
+    //     Felt::ZERO,
+    //     Felt::ZERO,
+    //     user_id.prefix().as_felt(),
+    //     user_id.suffix(),
+    // ]);
+    // let mut serial_reversed = input_note_serial.clone();
+    // serial_reversed.reverse();
 
-    Rpo256::merge(&[user_id_word, input_note_serial])
+    // let mut user_id_word_reversed = user_id_word.clone();
+    // user_id_word_reversed.reverse();
+    // // Rpo256::merge(&[user_id_word, serial_reversed])
+    // Rpo256::merge(&[user_id_word_reversed, input_note_serial])
+    [
+        input_note_serial[3] + Felt::new(1),
+        input_note_serial[2],
+        input_note_serial[1],
+        input_note_serial[0],
+        // input_note_serial[0],
+        // input_note_serial[1],
+        // input_note_serial[2],
+        // input_note_serial[3] + Felt::new(1),
+    ]
+    .into()
 }
