@@ -1721,8 +1721,8 @@ async fn lp_deposit_withdraw_happy_path_test() -> Result<()> {
     let lp_lib = get_lp_local_library()?;
     let token0_id = setup.faucets[0].faucet.id();
     let token1_id = setup.faucets[1].faucet.id();
-    let token0_asset = FungibleAsset::new(token0_id.clone(), deposit_amount)?;
-    let token1_asset = FungibleAsset::new(token1_id.clone(), deposit_amount)?;
+    let token0_asset = FungibleAsset::new(token0_id, deposit_amount)?;
+    let token1_asset = FungibleAsset::new(token1_id, deposit_amount)?;
 
     // ── Step 1: Deposit to seed the pool with reserves and LP supply ──
     let deposit_note = build_lp_local_deposit_note(
@@ -1761,7 +1761,7 @@ async fn lp_deposit_withdraw_happy_path_test() -> Result<()> {
     let acc_after_deposit = setup
         .clients
         .client
-        .get_account(setup.contract.id().clone())
+        .get_account(setup.contract.id())
         .await?
         .unwrap();
     let acc_after_deposit = match acc_after_deposit.account_data() {
@@ -1840,7 +1840,7 @@ async fn lp_deposit_withdraw_happy_path_test() -> Result<()> {
     let acc_after_withdraw = setup
         .clients
         .client
-        .get_account(setup.contract.id().clone())
+        .get_account(setup.contract.id())
         .await?
         .unwrap();
     let acc_after_withdraw = match acc_after_withdraw.account_data() {
