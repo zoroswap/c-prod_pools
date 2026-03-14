@@ -439,8 +439,6 @@ end
 #!
 @locals(6)
 pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, note_tag: felt, note_type: felt, output_note_root: word, input_note_serial: word) -> (felt, felt)
-    debug.stack.24
-
     # loc.0: LP_AMOUNT  = EMPTY, EMPTY, EMPTY, LP_AMOUNT loc.3 lp_amount
     # loc.4: amount_0_out
     # loc.5: amount_1_out
@@ -549,7 +547,6 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     loc_load.2 movdn.4
     # => [ASSET0_OUT, note_id]
     exec.output_note::add_asset
-    debug.stack.1
     # => []
 end
 
