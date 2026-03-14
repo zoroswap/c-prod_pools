@@ -185,10 +185,7 @@ pub fn build_lp_local_deposit_note(
 ) -> Result<Note> {
     let script = compile_lp_local_deposit_note_script(lp_local_library)?;
 
-    let inputs = NoteInputs::new(vec![
-        user_id.prefix().as_felt().into(),
-        user_id.suffix().into(),
-    ])?;
+    let inputs = NoteInputs::new(vec![user_id.prefix().as_felt(), user_id.suffix()])?;
 
     let assets = NoteAssets::new(vec![token0_asset.into(), token1_asset.into()])?;
 
@@ -278,117 +275,6 @@ pub fn compile_pool_note_script(
         .assemble_program(source)
         .map_err(|e| anyhow!("Failed to compile {procedure_name} note script: {e:?}"))?;
     Ok(NoteScript::new(program))
-}
-
-/// Builds a deposit note targeting the pool.
-///
-/// For first deposits (`current_total_lp == 0`), the sqrt hint is included in note inputs.
-pub fn build_deposit_note(
-    pool_id: AccountId,
-    pool_library: &Library,
-    token0_asset: FungibleAsset,
-    token1_asset: FungibleAsset,
-    min_lp_out: u64,
-    current_total_lp: u64,
-    sender: AccountId,
-    rng: &mut impl FeltRng,
-) -> Result<Note> {
-    let script = compile_pool_note_script(pool_library, "deposit")?;
-
-    let sqrt_hint = if current_total_lp == 0 {
-        let product = token0_asset.amount() as u128 * token1_asset.amount() as u128;
-        isqrt(product) as u64
-    } else {
-        0
-    };
-
-    let inputs = NoteInputs::new(vec![
-        Felt::new(1),
-        Felt::new(min_lp_out),
-        Felt::new(sqrt_hint),
-    ])?;
-
-    let assets = NoteAssets::new(vec![token0_asset.into(), token1_asset.into()])?;
-
-    let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-
-    let serial_num = rng.draw_word();
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
-    Ok(Note::new(assets, metadata, recipient))
-}
-
-/// Builds a swap note targeting the pool.
-pub fn build_swap_note(
-    pool_id: AccountId,
-    pool_library: &Library,
-    input_asset: FungibleAsset,
-    min_amount_out: u64,
-    sender: AccountId,
-    output_tag: Felt,
-    output_note_type: Felt,
-    output_recipient_digest: Word,
-    rng: &mut impl FeltRng,
-) -> Result<Note> {
-    let script = compile_pool_note_script(pool_library, "swap")?;
-
-    let inputs = NoteInputs::new(vec![
-        Felt::new(0),
-        Felt::new(min_amount_out),
-        output_tag,
-        Felt::ZERO,
-        output_note_type,
-        Felt::ZERO,
-        output_recipient_digest[0],
-        output_recipient_digest[1],
-        output_recipient_digest[2],
-        output_recipient_digest[3],
-    ])?;
-
-    let assets = NoteAssets::new(vec![input_asset.into()])?;
-
-    let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-
-    let serial_num = rng.draw_word();
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
-    Ok(Note::new(assets, metadata, recipient))
-}
-
-/// Builds a withdraw note targeting the pool (carries no assets).
-pub fn build_withdraw_note(
-    pool_id: AccountId,
-    pool_library: &Library,
-    lp_amount: u64,
-    sender: AccountId,
-    output_tag: Felt,
-    output_note_type: Felt,
-    output_recipient_digest: Word,
-    rng: &mut impl FeltRng,
-) -> Result<Note> {
-    let script = compile_pool_note_script(pool_library, "withdraw")?;
-
-    let inputs = NoteInputs::new(vec![
-        Felt::new(2),
-        Felt::new(lp_amount),
-        output_tag,
-        Felt::ZERO,
-        output_note_type,
-        Felt::ZERO,
-        output_recipient_digest[0],
-        output_recipient_digest[1],
-        output_recipient_digest[2],
-        output_recipient_digest[3],
-    ])?;
-
-    let assets = NoteAssets::new(vec![])?;
-
-    let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-
-    let serial_num = rng.draw_word();
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
-    Ok(Note::new(assets, metadata, recipient))
 }
 
 /// Compiles the xyk_pool library with lp_local, math, and storage_utils as dependencies.
