@@ -501,38 +501,28 @@ pub fn build_xyk_swap_tokens_for_exact_tokens_note(
     sender: AccountId,
     return_note_tag: Felt,
     return_note_type: Felt,
-    return_recipient_digest: Word,
+    serial_num: Word,
 ) -> Result<Note> {
     let script = compile_xyk_swap_tokens_for_exact_tokens_note_script(xyk_pool_library)?;
-
+    let p2id_root = get_p2id_root_hash();
     let inputs = NoteInputs::new(vec![
         exact_output_asset.faucet_id().prefix().as_felt(),
-        exact_output_asset.faucet_id().suffix().into(),
+        exact_output_asset.faucet_id().suffix(),
         Felt::ZERO,
         Felt::new(exact_output_asset.amount()),
         Felt::new(deadline),
         return_note_tag,
         return_note_type,
         Felt::ZERO,
-        return_recipient_digest[0],
-        return_recipient_digest[1],
-        return_recipient_digest[2],
-        return_recipient_digest[3],
+        p2id_root[0],
+        p2id_root[1],
+        p2id_root[2],
+        p2id_root[3],
     ])?;
 
     let assets = NoteAssets::new(vec![max_input_asset.into()])?;
-
     let tag = NoteTag::with_account_target(pool_id);
     let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-
-    let mut seed = [0; 32];
-    let mut std_rng = StdRng::from_os_rng();
-    std_rng.fill(&mut seed);
-    let mut rng = StdRng::from_seed(seed);
-    let mut seed = [0u8; 32];
-    rng.fill(&mut seed);
-    let serial_num =
-        Word::from_random_bytes(&seed).ok_or(anyhow!("Error generating random serial number"))?;
     let recipient = NoteRecipient::new(serial_num, script, inputs);
     Ok(Note::new(assets, metadata, recipient))
 }
