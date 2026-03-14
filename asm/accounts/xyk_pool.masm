@@ -236,7 +236,7 @@ pub proc swap_exact_tokens_for_tokens(note_serial: word, user_id_prefix: felt, u
 end
 
 @locals(3)
-pub proc swap_tokens_for_exact_tokens(note_serial: word, user_id_prefix: felt, user_id_suffix: felt, asset_out: word, max_asset_in: word, deadline: felt, note_tag: felt, note_type: felt, p2id_script_root: word) -> felt
+pub proc swap_tokens_for_exact_tokens(user_id_prefix: felt, user_id_suffix: felt, asset_out: word, max_asset_in: word, note_tag: felt, note_type: felt, p2id_script_root: word) -> felt
 
     # Initial stack
     # => [sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
@@ -252,7 +252,7 @@ pub proc swap_tokens_for_exact_tokens(note_serial: word, user_id_prefix: felt, u
     mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
 
     ### mem store asset in, min asset out
-    mem_storew_le.ASSET_IN_WORD dropw mem_storew_le.ASSET_OUT_WORD dropw
+    mem_storew_le.ASSET_OUT_WORD dropw mem_storew_le.ASSET_IN_WORD dropw
 
     ### store note metadata in memory
     mem_store.RETURN_NOTE_TAG mem_store.RETURN_NOTE_TYPE mem_storew_le.P2ID_SCRIPT_ROOT dropw
