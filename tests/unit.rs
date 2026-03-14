@@ -6,7 +6,10 @@ use miden_client::{
     account::{AccountId, StorageSlotName},
     asset::FungibleAsset,
     crypto::FeltRng,
-    note::{NoteAttachment, NoteTag, NoteType, build_p2id_recipient, create_p2id_note},
+    note::{
+        Note, NoteAssets, NoteAttachment, NoteMetadata, NoteTag, NoteType, build_p2id_recipient,
+        create_p2id_note,
+    },
     store::{AccountRecord, AccountRecordData},
     transaction::{AdviceInputs, OutputNote, TransactionRequestBuilder},
 };
@@ -1979,16 +1982,16 @@ async fn swap_tokens_for_exact_tokens_happy_path_test() -> Result<()> {
         setup.contract.id(),
         setup.user.id(),
         vec![
-            FungibleAsset::new(token1_id.clone(), swap_amount_out)?.into(),
-            FungibleAsset::new(token0_id.clone(), 10)?.into(),
+            FungibleAsset::new(token1_id, swap_amount_out)?.into(),
+            FungibleAsset::new(token0_id, 10)?.into(),
         ],
-        return_note_type.into(),
+        return_note_type,
         NoteAttachment::default(),
         setup.clients.client.rng(),
     )?;
 
-    let swap_max_input_asset = FungibleAsset::new(token0_id.clone(), expected_in + 10)?;
-    let swap_output_asset = FungibleAsset::new(token1_id.clone(), swap_amount_out)?;
+    let swap_max_input_asset = FungibleAsset::new(token0_id, expected_in + 10)?;
+    let swap_output_asset = FungibleAsset::new(token1_id, swap_amount_out)?;
     let swap_note = build_xyk_swap_tokens_for_exact_tokens_note(
         setup.contract.id(),
         &xyk_pool_lib,
@@ -2016,7 +2019,7 @@ async fn swap_tokens_for_exact_tokens_happy_path_test() -> Result<()> {
         .expected_output_recipients(vec![return_note.recipient().clone()])
         .expected_future_notes(vec![(
             return_note.clone().into(),
-            return_note.metadata().tag().into(),
+            return_note.metadata().tag(),
         )])
         .build()?;
     let _consume_id = setup
@@ -2042,7 +2045,7 @@ async fn swap_tokens_for_exact_tokens_happy_path_test() -> Result<()> {
     let acc_after_swap = setup
         .clients
         .client
-        .get_account(setup.contract.id().clone())
+        .get_account(setup.contract.id())
         .await?
         .unwrap();
     let acc_after_swap = match acc_after_swap.account_data() {
@@ -2130,7 +2133,7 @@ async fn swap_exact_tokens_for_tokens_happy_path_test() -> Result<()> {
 
     // ── Step 1: Deposit to seed the pool ──
     println!("\n=== DEPOSIT PHASE ===");
-    let depositor = setup.user.id().clone();
+    let depositor = setup.user.id();
     let pool_state =
         lp_local_deposit(&mut setup, deposit_amount, deposit_amount, depositor).await?;
     let (ts_d, r0_d, r1_d, pool_balance0_d, pool_balance1_d) = (
@@ -2171,17 +2174,20 @@ async fn swap_exact_tokens_for_tokens_happy_path_test() -> Result<()> {
     // let return_note_serial_num = Word::from_random_bytes(&[0; 32]).unwrap();
     // let return_note_recipient =
     // build_p2id_recipient(setup.user.id(), return_note_serial_num).unwrap();
-    let return_note = create_p2id_note(
-        setup.contract.id(),
-        setup.user.id(),
-        vec![FungibleAsset::new(token1_id, expected_out)?.into()],
-        return_note_type,
-        NoteAttachment::default(),
-        setup.clients.client.rng(),
-    )?;
+
+    // let return_note = create_p2id_note(
+    //     setup.contract.id(),
+    //     setup.user.id(),
+    //     vec![FungibleAsset::new(token1_id, expected_out)?.into()],
+    //     return_note_type,
+    //     NoteAttachment::default(),
+    //     setup.clients.client.rng(),
+    // )?;
 
     let swap_input_asset = FungibleAsset::new(token0_id, swap_amount_in)?;
     let swap_min_output_asset = FungibleAsset::new(token1_id, expected_out - 5)?;
+    let note_serial_num = setup.clients.client.rng().draw_word();
+
     let swap_note = build_xyk_swap_exact_tokens_for_tokens_note(
         setup.contract.id(),
         &xyk_pool_lib,
@@ -2189,9 +2195,28 @@ async fn swap_exact_tokens_for_tokens_happy_path_test() -> Result<()> {
         swap_min_output_asset,
         0,
         setup.user.id(),
-        return_note.metadata().tag().into(),
+        NoteTag::with_account_target(setup.user.id())
+            .as_u32()
+            .into(),
         return_note_type.into(),
+        note_serial_num,
     )?;
+
+    let swap_serial_num = swap_note.serial_num();
+    let p2id_serial_num: Word = [
+        swap_serial_num[0],
+        swap_serial_num[1],
+        swap_serial_num[2],
+        swap_serial_num[3] + Felt::new(1),
+    ]
+    .into();
+
+    let recipient = build_p2id_recipient(setup.user.id(), p2id_serial_num)?;
+    let tag = NoteTag::with_account_target(setup.user.id());
+    let metadata = NoteMetadata::new(setup.contract.id(), return_note_type, tag)
+        .with_attachment(NoteAttachment::default());
+    let vault = NoteAssets::new(vec![FungibleAsset::new(token1_id, expected_out)?.into()])?;
+    let return_note = Note::new(vault, metadata, recipient);
 
     let create_swap_req = TransactionRequestBuilder::new()
         .own_output_notes([OutputNote::Full(swap_note.clone())])
@@ -2202,6 +2227,16 @@ async fn swap_exact_tokens_for_tokens_happy_path_test() -> Result<()> {
         .submit_new_transaction(setup.user.id(), create_swap_req)
         .await?;
     setup.clients.client.sync_state().await?;
+
+    println!(
+        "\n\n swap return p2id recipient: {:?} \n\n",
+        return_note.recipient().digest()
+    );
+    println!(
+        "\n\n swap serial: {:?} \n p2id serial: {:?}\n",
+        swap_note.serial_num(),
+        return_note.serial_num()
+    );
 
     let consume_swap_req = TransactionRequestBuilder::new()
         .input_notes([(swap_note.clone(), None)])
@@ -2234,7 +2269,7 @@ async fn swap_exact_tokens_for_tokens_happy_path_test() -> Result<()> {
     let acc_after_swap = setup
         .clients
         .client
-        .get_account(setup.contract.id().clone())
+        .get_account(setup.contract.id())
         .await?
         .unwrap();
     let acc_after_swap = match acc_after_swap.account_data() {

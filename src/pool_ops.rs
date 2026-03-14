@@ -443,6 +443,7 @@ pub fn build_xyk_swap_exact_tokens_for_tokens_note(
     sender: AccountId,
     return_note_tag: Felt,
     return_note_type: Felt,
+    serial_num: Word,
 ) -> Result<Note> {
     let script = compile_xyk_swap_exact_tokens_for_tokens_note_script(xyk_pool_library)?;
     let p2id_root = get_p2id_root_hash();
@@ -462,18 +463,8 @@ pub fn build_xyk_swap_exact_tokens_for_tokens_note(
     ])?;
 
     let assets = NoteAssets::new(vec![input_asset.into()])?;
-
     let tag = NoteTag::with_account_target(pool_id);
     let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-
-    let mut seed = [0; 32];
-    let mut std_rng = StdRng::from_os_rng();
-    std_rng.fill(&mut seed);
-    let mut rng = StdRng::from_seed(seed);
-    let mut seed = [0u8; 32];
-    rng.fill(&mut seed);
-    let serial_num =
-        Word::from_random_bytes(&seed).ok_or(anyhow!("Error generating random serial number"))?;
     let recipient = NoteRecipient::new(serial_num, script, inputs);
     Ok(Note::new(assets, metadata, recipient))
 }

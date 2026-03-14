@@ -19,13 +19,13 @@ begin
     padw mem_loadw_be.8
     # => [P2ID_SCRIPT_ROOT]
 
-    # Push note_type, note_tag, deadline
-    mem_load.6 mem_load.5 mem_load.4
-    # => [deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
-
+    # Push note_type, note_tag and (mem_load.4 is deadline but then we run out of space if we use it)
+    mem_load.6 mem_load.5
+    # => [note_tag, note_type, P2ID_SCRIPT_ROOT]
+    
     # Push MIN_ASSET_OUT word (mem[0..3])
     padw mem_loadw_le.0
-    # => [MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
+    # => [MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
 
     # Load note asset to memory at ptr=40
     push.40 exec.active_note::get_assets
@@ -36,15 +36,11 @@ begin
 
     # Load ASSET_IN word
     padw mem_loadw_be.40
-    # => [ASSET_IN, MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
+    # => [ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
 
     # load user_id (sender)
     exec.active_note::get_sender
-    # => [sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
-
-    # get SERIAL of this note
-    exec.active_note::get_serial_number
-    # => [serial_num, sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
+    # => [sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
 
     call.xyk_pool::swap_exact_tokens_for_tokens
     exec.sys::truncate_stack
