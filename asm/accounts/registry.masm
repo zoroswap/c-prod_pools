@@ -39,92 +39,93 @@ const ASSET_0_ID_SUFFIX = 25
 const ASSET_1_ID_PREFIX = 26
 const ASSET_1_ID_SUFFIX = 27
 
-#@locals(4)
-#pub proc register_pool(
-#    # loc.0-3: pool_code_hash
-#    pool_id_prefix: felt, pool_id_suffix: felt, 
-#    asset_0_id_prefix: felt, asset_0_id_suffix: felt, 
-#    asset_1_id_prefix: felt, asset_1_id_suffix: felt
-#)
-#    # loc.0-3: pool_code_hash
-#    mem_store.POOL_ID_PREFIX mem_store.POOL_ID_SUFFIX
-#    exec.order_assets mem_storew_le.POOL_ASSETS_WORD dropw
-#    # => []
-#
-#    ### check of pool id already registered 
-#    padw mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX exec.is_pool_registered
-#    # => [is_pool_registered]
-#    assert.err=ERR_POOL_ID_ALREADY_REGISTERED
-#
-#    ### check if pool for assets already registered
-#    padw mem_loadw_le.POOL_ASSETS_WORD exec.get_pool_for_assets swap drop
-#    # => [pool_id_prefix]
-#    eq.0 assert.err=ERR_POOL_FOR_ASSETS_ALREADY_REGISTERED
-#
-#    ### get pool code hash via FPI
-#    procref.active_account::get_code_commitment  mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
-#    # =>[pool_id_prefix, pool_id_suffix, GET_CODE_COMMITMENT_HASH]
-#    exec.tx::execute_foreign_procedure loc_storew_le.0
-#    # => [POOL_CODE_HASH]
-#    ### validate pool code hash 
-#    exec.validate_pool_code_hash
-#    # => [is_code_hash_accepted]
-#    assert.err=ERR_POOL_CODE_HASH_NOT_ACCEPTED
-#
-#    ### update state
-#    ### update pool mapping, 
-#    padw loc_loadw_le.0 mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
-#    # => [pool_id_prefix, pool_id_suffix, POOL_CODE_HASH]
-#    exec.set_pool_mapping
-#    # => [] 
-#
-#    ### update assets to pool mapping
-#    mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX exec.pool_id_to_key
-#    # => [POOL_ID_KEY]
-#    padw mem_loadw_le.POOL_ASSETS_WORD 
-#    exec.set_assets_to_pool_mapping
-#    # => []
-#
-#end
+@locals(4)
+pub proc register_pool(
+    # loc.0-3: pool_code_hash
+    pool_id_prefix: felt, pool_id_suffix: felt, 
+    asset_0_id_prefix: felt, asset_0_id_suffix: felt, 
+    asset_1_id_prefix: felt, asset_1_id_suffix: felt
+)
+    # loc.0-3: pool_code_hash
+    mem_store.POOL_ID_PREFIX mem_store.POOL_ID_SUFFIX
+    exec.order_assets mem_storew_le.POOL_ASSETS_WORD dropw
+    # => []
+
+    ## check of pool id already registered 
+    padw mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX exec.is_pool_registered
+    ## => [is_pool_registered]
+    assert.err=ERR_POOL_ID_ALREADY_REGISTERED
+
+    ### check if pool for assets already registered
+    padw mem_loadw_le.POOL_ASSETS_WORD exec.get_pool_for_assets swap drop
+    # => [pool_id_prefix]
+    eq.0 assert.err=ERR_POOL_FOR_ASSETS_ALREADY_REGISTERED
+
+    ### get pool code hash via FPI
+    procref.active_account::get_code_commitment  mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
+    # =>[pool_id_prefix, pool_id_suffix, GET_CODE_COMMITMENT_HASH]
+    exec.tx::execute_foreign_procedure loc_storew_le.0
+    # => [POOL_CODE_HASH]
+    ### validate pool code hash 
+    exec.validate_pool_code_hash
+    # => [is_code_hash_accepted]
+    assert.err=ERR_POOL_CODE_HASH_NOT_ACCEPTED
+
+    ##### update state
+    ### update pool mapping, 
+    padw loc_loadw_le.0 mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
+    # => [pool_id_prefix, pool_id_suffix, POOL_CODE_HASH]
+    exec.set_pool_mapping
+    # => [] 
+
+    ### update assets to pool mapping
+    mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX exec.pool_id_to_key
+    # => [POOL_ID_KEY]
+    padw mem_loadw_le.POOL_ASSETS_WORD 
+    # => [POOL_ASSETS_WORD, POOL_ID_KEY]
+    exec.set_assets_to_pool_mapping
+    ## => []
+
+end
 
 ##### SETTERS
-#proc set_pool_mapping(pool_id_preffix: felt, pool_id_suffix: felt, pool_code_hash: word)
-#    exec.pool_id_to_key
-#    # => [POOL_ID_KEY, POOL_CODE_HASH]
-#    push.POOLS_MAPPING[0..2] exec.active_account::set_map_item
-#    exec.sys::truncate_stack
-#end
-#
-#proc set_assets_to_pool_mapping(pool_assets_word: word, pool_id_key: word)
-#    exec.order_assets
-#    
-#    push.ASSETS_TO_POOL_MAPPING[0..2] exec.active_account::set_map_item
-#    exec.sys::truncate_stack
-#end
+proc set_pool_mapping(pool_id_preffix: felt, pool_id_suffix: felt, pool_code_hash: word)
+    exec.pool_id_to_key
+    # => [POOL_ID_KEY, POOL_CODE_HASH]
+    push.POOLS_MAPPING[0..2] exec.native_account::set_map_item
+    exec.sys::truncate_stack
+end
+
+proc set_assets_to_pool_mapping(pool_assets_word: word, pool_id_key: word)
+    exec.order_assets swapw
+    # => [POOL_ID_KEY,POOL_ASSETS_WORD]
+    push.ASSETS_TO_POOL_MAPPING[0..2] exec.native_account::set_map_item
+    exec.sys::truncate_stack
+end
 
 
 
 
-#### VALIDATORS
-#pub proc validate_pool_code_hash(pool_code_hash: word) -> i1
-#    push.ACCEPTED_CODE_HASHES_MAPPING_SLOT[0..2] exec.active_account::get_map_item
-#    drop drop drop
-#    # => [is_code_hash_accepted]
-#    exec.sys::truncate_stack
-#end
+##### VALIDATORS
+pub proc validate_pool_code_hash(pool_code_hash: word) -> i1
+    push.ACCEPTED_CODE_HASHES_MAPPING_SLOT[0..2] exec.active_account::get_map_item
+    drop drop drop
+    # => [is_code_hash_accepted]
+    exec.sys::truncate_stack
+end
 
-#pub proc is_pool_registered(pool_id_prefix: felt, pool_id_suffix: felt) -> i1
-#    exec.get_pool_code_hash
-#    # => [POOL_CODE_HASH]
-#    ### check if empty
-#    drop drop drop neq.0
-#    if.true # code hash not empty - return true
-#        push.1
-#    else # code hash empty - return false   
-#        push.0
-#    end
-#    exec.sys::truncate_stack
-#end
+pub proc is_pool_registered(pool_id_prefix: felt, pool_id_suffix: felt) -> i1
+    exec.get_pool_code_hash
+    # => [POOL_CODE_HASH]
+    ### check if empty
+    drop drop drop neq.0
+    if.true # code hash not empty - return true
+        push.1
+    else # code hash empty - return false   
+        push.0
+    end
+    exec.sys::truncate_stack
+end
 
 ##### HELPER PROCEDURES
 @locals(5)
@@ -159,37 +160,7 @@ pub proc order_assets(asset_0_id_prefix: felt, asset_0_id_suffix: felt, asset_1_
             end
         end
     end
-    
-    ##### compare prefixes 
-    ### step 1 (is prefix_0 lower than prefix_1)
-    #loc_load.0 u32split loc_load.2 u32split exec.u64::lt
-    ## => [is_prefix_0_smaller ]
-    #if.true # keep order
-    #    padwloc_loadw_le.0
-    #else ### step 2 (is prefix_0 higher than prefix_1)
-    #    loc_load.0 u32split loc_load.2 u32split exec.u64::gt
-    #    # => [is_prefix_0_bigger ]
-    #    if.true # reverse order
-    #        loc_load.1 loc_load.0 loc_load.3 loc_load.2
-    #    else # prefixes are equal - compare suffixes
-    #        ##### compare suffixes
-    #        ### step 1
-    #        loc_load.1 u32split loc_load.3 u32split exec.u64::lt
-    #        # => [is_suffix_0_smaller ]
-    #        if.true # keep order
-    #            padw loc_loadw_le.0
-    #        else # step 2 (is prefix_0 higher than prefix_1)
-    #            loc_load.1 u32split loc_load.3 u32split exec.u64::gt
-    #            # => [is_suffix_0_bigger ]
-    #            if.true # reverse order
-    #                loc_load.1 loc_load.0 loc_load.3 loc_load.2
-    #            else # suffixes are equal and prefixes are equal - both are the same asset - revert
-    #                push.0 assert.err=ERR_BOTH_ASSETS_ARE_THE_SAME
-    #            end
-    #        end
-    #    end
-    #end
-    # => [lower_asset_id_prefix, lower_asset_id_suffix, higher_asset_id_prefix, higher_asset_id_suffix]
+      
     exec.sys::truncate_stack
 end
 
