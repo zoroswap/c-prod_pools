@@ -149,7 +149,8 @@ end
 
 
 #! retuns 0 if equal, 1 if felt_1 smaller, 2 if felt_1 bigger
-pub proc compare_felts(felt_0: felt, felt_1: felt) -> u8 
+@locals(2)
+pub proc compare_felts(felt_0: felt, felt_1: felt) -> felt
     # loc.0: felt_0
     # loc.1: felt_1
     loc_store.0 loc_store.1

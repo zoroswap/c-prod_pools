@@ -3,8 +3,9 @@ use miden_protocol::account::StorageSlotName;
 use std::{fs, path::PathBuf, sync::Arc};
 
 use anyhow::{Result, anyhow};
-use miden_client::assembly::{
-    Assembler, DefaultSourceManager, Module, ModuleKind, Path as AssemblyPath,
+use miden_client::{
+    Felt,
+    assembly::{Assembler, DefaultSourceManager, Module, ModuleKind, Path as AssemblyPath},
 };
 use miden_client::{
     account::{Account, AccountId},
@@ -69,4 +70,33 @@ pub fn read_masm_to_string(kind: &str, name: &str) -> Result<String> {
         .iter()
         .collect();
     fs::read_to_string(&path).map_err(|e| anyhow!("Failed to read {path:?}: {e}"))
+}
+
+pub fn order_assets_as_felts(
+    a0_pfx: Felt,
+    a0_sfx: Felt,
+    a1_pfx: Felt,
+    a1_sfx: Felt,
+) -> Result<(Felt, Felt, Felt, Felt)> {
+    let a0_pfx: u64 = a0_pfx.into();
+    let a0_sfx: u64 = a0_sfx.into();
+    let a1_pfx: u64 = a1_pfx.into();
+    let a1_sfx: u64 = a1_sfx.into();
+    if (a0_pfx, a0_sfx) < (a1_pfx, a1_sfx) {
+        Ok((
+            Felt::new(a0_pfx),
+            Felt::new(a0_sfx),
+            Felt::new(a1_pfx),
+            Felt::new(a1_sfx),
+        ))
+    } else if (a0_pfx, a0_sfx) > (a1_pfx, a1_sfx) {
+        Ok((
+            Felt::new(a1_pfx),
+            Felt::new(a1_sfx),
+            Felt::new(a0_pfx),
+            Felt::new(a0_sfx),
+        ))
+    } else {
+        Err(anyhow!("Both assets are the same"))
+    }
 }

@@ -13,7 +13,7 @@ use zoro::math
 #use zoro::storage_utils
 use zoro::lp_local
 
-use lp_local::set_reserves
+#use lp_local::set_reserves
 pub use lp_local::get_pool_asset_ids
 use lp_local::add_to_reserve_by_asset_id
 use lp_local::sub_from_reserve_by_asset_id
@@ -304,40 +304,5 @@ proc _create_p2id_note() -> felt
     # => [note_id]
     loc_load.0
     # => [note_id]
-    exec.sys::truncate_stack
-end
-
-pub proc order_assets(asset_0_id_prefix: felt, asset_0_id_suffix: felt, asset_1_id_prefix: felt, asset_1_id_suffix: felt) -> word
-    # loc.0: asset_0_id_prefix
-    # loc.1: asset_0_id_suffix
-    # loc.2: asset_1_id_prefix
-    # loc.3: asset_1_id_suffix
-    # loc.4: comparison result
-    loc_store.0 loc_store.1 loc_store.2 loc_store.3
-
-    ##### compare prefixes
-    loc_load.0 loc_load.2 exec.math::compare_felts loc_store.4 loc_load.4
-    # => [prefix comparison result]
-    eq.1 if.true # prefix 1 smaller -> keep order
-        padw loc_loadw_le.0
-    else 
-        loc_load.4 eq.2 if.true # prefix 1 bigger -> reverse order
-            loc_load.1 loc_load.0 loc_load.3 loc_load.2
-        else # prefixes are equal - compare suffixes
-            loc_load.1 loc_load.3 exec.math::compare_felts loc_store.4 loc_load.4
-            # => [suffix comparison result]
-            eq.1 if.true # suffix 1 smaller -> keep order
-                padw loc_loadw_le.0
-            else
-                loc_load.4 eq.2 if.true # suffix 1 bigger -> reverse order
-                    loc_load.1 loc_load.0 loc_load.3 loc_load.2
-                else # suffixes are equal and prefixes are equal - both are the same asset - revert
-                    push.0 assert.err=ERR_BOTH_ASSETS_ARE_THE_SAME
-                end
-                
-            end
-        end
-    end
-    
     exec.sys::truncate_stack
 end

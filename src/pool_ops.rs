@@ -93,6 +93,22 @@ pub fn compile_lp_local_fuzz_tx_script(source: &str) -> Result<TransactionScript
     compile_custom_tx_script(&lp_local_fuzz_dummy_library, source)
 }
 
+/// Compiles the registry MASM library (order_assets, register_pool, etc.).
+/// Depends on math and storage_utils libraries.
+pub fn get_registry_library() -> Result<Library> {
+    let math_library = get_math_library()?;
+    let storage_utils_library = get_storage_utils_library()?;
+    let source = read_masm_to_string("accounts", "registry")?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(math_library)
+        .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
+        .with_static_library(storage_utils_library)
+        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?;
+    create_library(assembler, "zoro::registry", &source)
+        .map_err(|e| anyhow!("Failed to compile registry library: {e:?}"))
+}
+
 /// Compiles the storage_utils MASM library (add_to_storage_item, add_to_map_item, set_map_item).
 /// Depends on the math library.
 pub fn get_storage_utils_library() -> Result<Library> {

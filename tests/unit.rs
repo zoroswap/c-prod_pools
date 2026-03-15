@@ -15,9 +15,9 @@ use xyk_pool::pool_ops::{
     build_xyk_swap_tokens_for_exact_tokens_note, compile_custom_tx_script,
     compile_lp_local_fuzz_tx_script, compile_storage_fuzz_tx_script, compute_expected_lp,
     compute_expected_withdraw, get_combined_pool_library, get_lp_local_library, get_math_library,
-    get_pool_library, isqrt,
+    get_pool_library, get_registry_library, isqrt,
 };
-use xyk_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
+use xyk_pool::utils::{fetch_vault_for_account_from_chain, order_assets_as_felts, slot_name};
 
 use std::{collections::BTreeSet, time::Duration};
 use test_utils::*;
@@ -2290,6 +2290,162 @@ async fn swap_exact_tokens_for_tokens_happy_path_test() -> Result<()> {
     );
 
     println!("\nswap_happy_path_test finished");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn order_assets_fuzz_test() -> Result<()> {
+    use rand::Rng;
+
+    let iterations: usize = 100;
+    let max_val: u64 = u64::MAX >> 1;
+
+    let mut setup = setup_lightweight_environment().await?;
+    let registry_library = get_registry_library()?;
+    let mut rng = rand::rng();
+
+    let edge_cases: Vec<(u64, u64, u64, u64)> = vec![
+        (0, 0, 0, 1),
+        (0, 1, 0, 0),
+        (1, 0, 0, 0),
+        (0, 0, 1, 0),
+        (100, 200, 100, 300),
+        (100, 300, 100, 200),
+        (1, 1, 2, 2),
+        (2, 2, 1, 1),
+        (max_val, max_val, 0, 0),
+        (0, 0, max_val, max_val),
+    ];
+
+    for (i, (a0_pfx, a0_sfx, a1_pfx, a1_sfx)) in edge_cases
+        .into_iter()
+        .chain((0..iterations).map(|_| {
+            (
+                rng.random_range(0..=max_val),
+                rng.random_range(0..=max_val),
+                rng.random_range(0..=max_val),
+                rng.random_range(0..=max_val),
+            )
+        }))
+        .filter(|(a0_pfx, a0_sfx, a1_pfx, a1_sfx)| a0_pfx != a1_pfx || a0_sfx != a1_sfx)
+        .enumerate()
+    {
+        let source = format!(
+            "use zoro::registry\n\
+             use miden::core::sys\n\
+             begin\n\
+                 push.{a1_sfx}.{a1_pfx}.{a0_sfx}.{a0_pfx}\n\
+                 call.registry::order_assets\n\
+                 exec.sys::truncate_stack\n\
+             end"
+        );
+
+        let script = compile_custom_tx_script(&registry_library, &source)?;
+
+        let stack = setup
+            .clients
+            .client
+            .execute_program(
+                setup.contract.id(),
+                script,
+                AdviceInputs::default(),
+                BTreeSet::new(),
+            )
+            .await?;
+
+        let (exp_lo_pfx, exp_lo_sfx, exp_hi_pfx, exp_hi_sfx) = order_assets_as_felts(
+            Felt::new(a0_pfx),
+            Felt::new(a0_sfx),
+            Felt::new(a1_pfx),
+            Felt::new(a1_sfx),
+        )?;
+
+        let got = (
+            stack[0].as_int(),
+            stack[1].as_int(),
+            stack[2].as_int(),
+            stack[3].as_int(),
+        );
+        let expected = (
+            exp_lo_pfx.as_int(),
+            exp_lo_sfx.as_int(),
+            exp_hi_pfx.as_int(),
+            exp_hi_sfx.as_int(),
+        );
+
+        println!(
+            "[{}] in=({},{},{},{}) => got={:?}, expected={:?}",
+            i + 1,
+            a0_pfx,
+            a0_sfx,
+            a1_pfx,
+            a1_sfx,
+            got,
+            expected,
+        );
+
+        assert_eq!(
+            got,
+            expected,
+            "Mismatch at iteration {}: input=({},{},{},{})",
+            i + 1,
+            a0_pfx,
+            a0_sfx,
+            a1_pfx,
+            a1_sfx,
+        );
+    }
+
+    println!("All order_assets fuzz iterations passed.");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn order_assets_same_asset_fails_test() -> Result<()> {
+    use rand::Rng;
+
+    let mut setup = setup_lightweight_environment().await?;
+    let registry_library = get_registry_library()?;
+    let mut rng = rand::rng();
+
+    let pfx: u64 = rng.random_range(0..=(u64::MAX >> 1));
+    let sfx: u64 = rng.random_range(0..=(u64::MAX >> 1));
+
+    let source = format!(
+        "use zoro::registry\n\
+         use miden::core::sys\n\
+         begin\n\
+             push.{sfx}.{pfx}.{sfx}.{pfx}\n\
+             call.registry::order_assets\n\
+             exec.sys::truncate_stack\n\
+         end"
+    );
+
+    let script = compile_custom_tx_script(&registry_library, &source)?;
+
+    let result = setup
+        .clients
+        .client
+        .execute_program(
+            setup.contract.id(),
+            script,
+            AdviceInputs::default(),
+            BTreeSet::new(),
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "order_assets with identical assets should fail, but got Ok({:?})",
+        result.unwrap()
+    );
+    println!(
+        "order_assets_same_asset_fails_test: correctly failed with: {:?}",
+        result.unwrap_err()
+    );
+
     tokio::time::sleep(Duration::from_secs(1)).await;
     Ok(())
 }
