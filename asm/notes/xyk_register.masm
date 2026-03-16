@@ -1,5 +1,11 @@
+use miden::protocol::active_account
+use miden::protocol::account_id
+
 use zoro::registry
 use miden::core::sys
+
+
+const ERR_REGISTER_TARGET_ACCT_MISMATCH = "Register target account mismatch"
 
 const INPUTS_START = 0
 const ASSET0_PREFIX = 0
@@ -8,6 +14,8 @@ const ASSET1_PREFIX = 2
 const ASSET1_SUFFIX = 3
 const XYK_POOL_PREFIX = 4
 const XYK_POOL_SUFFIX = 5
+const REGISTRY_PREFIX = 6
+const REGISTRY_SUFFIX = 7
 
 begin
 	push.INPUTS_START
@@ -19,9 +27,22 @@ begin
 	mem_load.ASSET1_SUFFIX mem_load.ASSET1_PREFIX
 	mem_load.ASSET0_SUFFIX mem_load.ASSET0_PREFIX
     mem_load.XYK_POOL_SUFFIX mem_load.XYK_POOL_PREFIX
+    mem_load.REGISTRY_SUFFIX mem_load.REGISTRY_PREFIX
 	
     # => [xyk_pool_prefix, xyk_pool_suffix, asset0_prefix, asset0_suffix, asset1_prefix, asset1_suffix]
 	call.registry::register_pool
 
 	exec.sys::truncate_stack
 end
+
+
+
+proc validate_consumer()
+    exec.active_account::get_id
+    # => [consumer_prefix, consumer_suffix]
+    mem_load.REGISTRY_SUFFIX mem_load.REGISTRY_PREFIX
+    # => [registry_prefix, registry_suffix, consumer_prefix, consumer_suffix]
+   exec.account_id::is_equal assert.err=ERR_P2ID_TARGET_ACCT_MISMATCH
+end
+
+
