@@ -192,6 +192,24 @@ pub fn compile_lp_local_deposit_note_script(lp_local_library: &Library) -> Resul
     Ok(NoteScript::new(program))
 }
 
+/// Compiles the register xyk pool note script.
+pub fn compile_xyk_register_note_script() -> Result<NoteScript> {
+    let xyk_pool_lib = get_combined_pool_library()?;
+    let xyk_registry_lib = get_registry_library()?;
+    let source = read_masm_to_string("notes", "xyk_register")
+        .map_err(|e| anyhow!("Failed to read xyk_register note script: {e:?}"))?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(xyk_pool_lib)
+        .map_err(|e| anyhow!("Failed to add xyk_pool library to assembler: {e:?}"))?
+        .with_static_library(xyk_registry_lib)
+        .map_err(|e| anyhow!("Failed to add xyk_registry library to assembler: {e:?}"))?;
+    let program = assembler
+        .assemble_program(source)
+        .map_err(|e| anyhow!("Failed to compile lp_local deposit note script: {e:?}"))?;
+    Ok(NoteScript::new(program))
+}
+
 /// Builds a deposit note targeting the lp_local pool.
 /// Note inputs: [user_id_prefix, user_id_suffix].
 pub fn build_lp_local_deposit_note(
@@ -203,14 +221,10 @@ pub fn build_lp_local_deposit_note(
     sender: AccountId,
 ) -> Result<Note> {
     let script = compile_lp_local_deposit_note_script(lp_local_library)?;
-
-    let inputs = NoteInputs::new(vec![user_id.prefix().as_felt(), user_id.suffix()])?;
-
+    let inputs = NoteInputs::new(vec![user_id.prefix().into(), user_id.suffix()])?;
     let assets = NoteAssets::new(vec![token0_asset.into(), token1_asset.into()])?;
-
     let tag = NoteTag::with_account_target(pool_id);
     let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-
     let mut seed = [0; 32];
     // default from os to get initial seed
     let mut std_rng = StdRng::from_os_rng();
@@ -331,6 +345,27 @@ pub fn compile_xyk_swap_exact_tokens_for_tokens_note_script(
         anyhow!("Failed to compile xyk_swap_exact_tokens_for_tokens note script: {e:?}")
     })?;
     Ok(NoteScript::new(program))
+}
+
+pub fn build_dummy_register_note(registry_id: &AccountId, serial_num: Word) -> Note {
+    let script = compile_xyk_register_note_script().unwrap();
+    let assets = NoteAssets::new(vec![]).unwrap();
+    let tag = NoteTag::with_account_target(*registry_id);
+    let metadata = NoteMetadata::new(*registry_id, NoteType::Public, tag);
+    let inputs = NoteInputs::new(
+        [
+            Felt::ZERO,
+            Felt::ZERO,
+            Felt::ZERO,
+            Felt::ZERO,
+            Felt::ZERO,
+            Felt::ZERO,
+        ]
+        .into(),
+    )
+    .unwrap();
+    let recipient = NoteRecipient::new(serial_num, script, inputs);
+    Note::new(assets, metadata, recipient)
 }
 
 /// Builds a swap note targeting the combined pool (lp_local + xyk_pool).

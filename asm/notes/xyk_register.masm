@@ -1,5 +1,6 @@
 use zoro::registry
 use miden::core::sys
+use miden::protocol::active_note
 
 const INPUTS_START = 0
 const ASSET0_PREFIX = 0

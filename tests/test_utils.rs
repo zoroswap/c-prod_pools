@@ -11,14 +11,18 @@ use miden_client::{
 };
 use std::{env, fs, path::PathBuf, time::Duration};
 use tokio::time::sleep;
-use xyk_pool::common::{
-    CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
-    deploy_combined_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool, deploy_registry,
-    deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, deploy_xyk_pool, fund_wallet,
-    instantiate_simple_client, load_test_state, save_test_state, touch_account, try_import_account,
-};
 use xyk_pool::pool_ops::{build_lp_local_deposit_note, get_lp_local_library};
 use xyk_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
+use xyk_pool::{
+    common::{
+        CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
+        deploy_combined_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool, deploy_registry,
+        deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, deploy_xyk_pool, fund_wallet,
+        instantiate_simple_client, load_test_state, save_test_state, touch_account,
+        try_import_account,
+    },
+    utils::get_pool_account_code_commitment,
+};
 
 const DEFAULT_FUND_AMOUNT: u64 = 1_000_000_000_000;
 
@@ -498,11 +502,19 @@ pub async fn setup_combined_pool_test_environment() -> Result<TestSetup> {
 
     let token0_id = faucets[0].faucet.id();
     let token1_id = faucets[1].faucet.id();
+    let (registry, _) = deploy_registry(
+        &mut clients.client,
+        keystore.clone(),
+        get_pool_account_code_commitment(),
+    )
+    .await?;
+
     let (combined_pool, _) = deploy_combined_pool(
         &mut clients.client,
         keystore.clone(),
         &token0_id,
         &token1_id,
+        &registry.id(),
     )
     .await?;
 
@@ -542,11 +554,18 @@ pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
     let token0_id = faucets[0].faucet.id();
     let token1_id = faucets[1].faucet.id();
 
+    let (registry, _) = deploy_registry(
+        &mut clients.client,
+        keystore.clone(),
+        get_pool_account_code_commitment(),
+    )
+    .await?;
     let (pool, _) = deploy_combined_pool(
         &mut clients.client,
         keystore.clone(),
         &token0_id,
         &token1_id,
+        &registry.id(),
     )
     .await?;
 

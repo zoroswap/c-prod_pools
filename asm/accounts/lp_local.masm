@@ -48,7 +48,7 @@ const RESERVE_SLOT = word("zoro::lp_local::reserve")
 const TOTAL_SUPPLY_SLOT = word("zoro::lp_local::total_supply")
 const USER_DEPOSITS_MAPPING_SLOT = word("zoro::lp_local::user_deposits_mapping")
 
-const REGISTRY_SLOT = word("zoro::lp_local::registry")
+const REGISTRY_ID_SLOT = word("zoro::lp_local::registry_id")
 const REGISTER_NOTE_ROOT_SLOT = word("zoro::lp_local::register_note_root")
 
 #################
@@ -138,8 +138,6 @@ proc get_user_deposit_key#(prefix: felt, suffix: felt) -> Word
     push.0.0 movup.3 movup.3
     # => [prefix, suffix, 0 , 0 ] == [KEY]
 end
-
-
 
 pub proc total_supply#() -> felt
     push.TOTAL_SUPPLY_SLOT[0..2] exec.active_account::get_item
@@ -581,15 +579,20 @@ proc create_register_pool_note()
     # => []
 
     ### load root hash and serial
-    padw mem_loadw_le.REGISTER_NOTE_ROOT_HASH
+    push.REGISTER_NOTE_ROOT_SLOT[0..2]
+    exec.active_account::get_item
+    # => [ REGISTER_NOTE_ROOT ]
+
     exec.compute_return_note_serial_num
-    ## => [REGISTER_SERIAL_NUM, REGISTER_NOTE_ROOT_HASH]
+    ## => [REGISTER_SERIAL_NUM, REGISTER_NOTE_ROOT ]
     ### push nr of inputs
     push.6
     push.OUTPUT_NOTE_INPUTS_START
-    ## => [inputs_ptr, number_of_inputs, REGISTER_SERIAL_NUM, REGISTER_NOTE_ROOT_HASH]
+    ## => [inputs_ptr, number_of_inputs, REGISTER_SERIAL_NUM, REGISTER_NOTE_ROOT]
     exec.note::build_recipient
     # => [RECIPIENT]
+    push.1.0
+    # => [note_tag, note_type, RECIPIENT]
     exec.output_note::create
     # => [note_id]
     drop
