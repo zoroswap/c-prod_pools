@@ -9,7 +9,8 @@ use miden_client::{
     store::AccountRecordData,
     transaction::{OutputNote, TransactionRequestBuilder},
 };
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::PathBuf, time::Duration};
+use tokio::time::sleep;
 use xyk_pool::common::{
     CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
     deploy_combined_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool, deploy_registry,
@@ -549,8 +550,8 @@ pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
     )
     .await?;
 
-    //lp_local_deposit(&mut setup, 1000000000, 1000000000, user.id()).await?;
     touch_account(&mut clients.client, &pool).await.unwrap();
+    sleep(Duration::from_secs(5)).await;
 
     let pool_code_hash = pool.code().commitment();
     println!("Pool code commitment: {:?}", pool_code_hash);

@@ -29,6 +29,7 @@ use miden_standards::note::utils::build_p2id_recipient;
 use rusqlite::Connection;
 use std::sync::Arc;
 use std::{fs, path::PathBuf, time::Duration};
+use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
 use serde::{Deserialize, Serialize};

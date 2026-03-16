@@ -1,5 +1,5 @@
 use miden::protocol::native_account
-#use miden::protocol::active_account
+use miden::protocol::active_account
 #use miden::protocol::active_note
 use miden::protocol::output_note
 #use miden::protocol::asset
@@ -306,3 +306,8 @@ proc _create_p2id_note() -> felt
     # => [note_id]
     exec.sys::truncate_stack
 end
+
+pub proc get_account_code_commitment() -> word
+    exec.active_account::get_code_commitment
+    exec.sys::truncate_stack
+end 

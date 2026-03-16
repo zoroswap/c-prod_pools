@@ -9,6 +9,7 @@ use miden::core::sys
 
 use zoro::storage_utils
 use zoro::math
+use zoro::xyk_pool
 
 ##### STORAGE SLOTS
 
@@ -53,7 +54,7 @@ pub proc register_pool(
     ## check of pool id already registered 
     padw mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX exec.is_pool_registered
     ## => [is_pool_registered]
-    assert.err=ERR_POOL_ID_ALREADY_REGISTERED
+    eq.0 assert.err=ERR_POOL_ID_ALREADY_REGISTERED
 
     ### check if pool for assets already registered
     padw mem_loadw_le.POOL_ASSETS_WORD exec.get_pool_for_assets swap drop
@@ -61,12 +62,15 @@ pub proc register_pool(
     eq.0 assert.err=ERR_POOL_FOR_ASSETS_ALREADY_REGISTERED
 
     ### get pool code hash via FPI
-    procref.active_account::get_code_commitment  mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
-    # =>[pool_id_prefix, pool_id_suffix, GET_CODE_COMMITMENT_HASH]
+    procref.xyk_pool::get_account_code_commitment mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
+
+    # => [pool_id_prefix, pool_id_suffix, GET_CODE_COMMITMENT_HASH]
     exec.tx::execute_foreign_procedure loc_storew_le.0
+
     # => [POOL_CODE_HASH]
     ### validate pool code hash 
     exec.validate_pool_code_hash
+
     # => [is_code_hash_accepted]
     assert.err=ERR_POOL_CODE_HASH_NOT_ACCEPTED
 
@@ -80,10 +84,12 @@ pub proc register_pool(
     ### update assets to pool mapping
     mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX exec.pool_id_to_key
     # => [POOL_ID_KEY]
+    debug.stack.8
     padw mem_loadw_le.POOL_ASSETS_WORD 
     # => [POOL_ASSETS_WORD, POOL_ID_KEY]
     exec.set_assets_to_pool_mapping
     ## => []
+    exec.sys::truncate_stack
 
 end
 
