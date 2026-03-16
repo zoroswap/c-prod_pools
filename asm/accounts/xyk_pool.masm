@@ -1,12 +1,14 @@
 use miden::protocol::native_account
 #use miden::protocol::active_account
-#use miden::protocol::active_note
+use miden::protocol::active_note
 use miden::protocol::output_note
 #use miden::protocol::asset
-
 use miden::core::sys
-
 use miden::core::math::u64
+
+use miden::protocol::note
+use miden::protocol::active_account
+use miden::protocol::account_id
 
 
 use zoro::math
@@ -47,14 +49,17 @@ const RETURN_NOTE_DETAILS_WORD = 32
 const RETURN_NOTE_TAG = 32
 const RETURN_NOTE_TYPE = 33
 
-const RETURN_NOTE_RECIPIENT_WORD = 36
+const P2ID_SCRIPT_ROOT = 36
 
 const RETURN_NOTE_ASSET_WORD = 40
 const RETURN_NOTE_ASSET_ID_PREFIX = 40
 const RETURN_NOTE_ASSET_ID_SUFFIX = 41
 const RETURN_NOTE_AMOUNT = 43
 
-
+const USER_ACCOUNT_ID_WORD = 48
+const USER_ACCOUNT_ID_PREFIX = 48
+const USER_ACCOUNT_ID_SUFFIX = 49
+const INPUT_NOTE_SERIAL = 52
 
 pub proc quote(amount_A: felt, reserve_A: felt, reserve_B: felt) -> felt
     # => [amount_A, reserve_A, reserve_B]
@@ -165,15 +170,27 @@ end
 
 
 @locals(2)
-pub proc swap_exact_tokens_for_tokens(asset_in: word, min_asset_out: word, deadline: felt, note_tag: felt, note_type: felt, return_note_recipient: word) -> felt
-    # loc.0: deadline
-    # loc.1: amount_out
+pub proc swap_exact_tokens_for_tokens(note_serial: word, user_id_prefix: felt, user_id_suffix: felt, asset_in: word, min_asset_out: word, note_tag: felt, note_type: felt, p2id_script_root: word) -> felt
+
+    # Initial stack
+    # => [sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
+
+    # get SERIAL of this note
+    exec.active_note::get_serial_number
+    # => [serial_num, sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
+ 
+    # store user account id
+    mem_storew_le.INPUT_NOTE_SERIAL dropw
+
+    # store user account id
+    mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
+
     ### mem store asset in, min asset out
-    mem_storew_le.ASSET_IN_WORD dropw mem_storew_le.ASSET_OUT_WORD dropw 
-    ### localy store deadline
-    loc_store.0 
+    mem_storew_le.ASSET_IN_WORD dropw mem_storew_le.ASSET_OUT_WORD dropw
+
     ### store note metadata in memory
-    mem_store.RETURN_NOTE_TAG mem_store.RETURN_NOTE_TYPE mem_storew_le.RETURN_NOTE_RECIPIENT_WORD dropw
+    mem_store.RETURN_NOTE_TAG mem_store.RETURN_NOTE_TYPE mem_storew_le.P2ID_SCRIPT_ROOT dropw
+
     mem_load.ASSET_OUT_ID_SUFFIX mem_load.ASSET_OUT_ID_PREFIX 
     exec.get_reserve_by_asset_id
     # => [reserve_out]
@@ -219,16 +236,27 @@ pub proc swap_exact_tokens_for_tokens(asset_in: word, min_asset_out: word, deadl
 end
 
 @locals(3)
-pub proc swap_tokens_for_exact_tokens(asset_out: word, max_asset_in: word, deadline: felt, note_tag: felt, note_type: felt, return_note_recipient: word) -> felt
-    # loc.0: deadline
-    # loc.1: amount_in
-    # loc.2: remaining_amount_in
-    ### mem store  asset out, max asset in
-    mem_storew_le.ASSET_OUT_WORD dropw mem_storew_le.ASSET_IN_WORD dropw 
-    ### localy store deadline
-    loc_store.0 
+pub proc swap_tokens_for_exact_tokens(user_id_prefix: felt, user_id_suffix: felt, asset_out: word, max_asset_in: word, note_tag: felt, note_type: felt, p2id_script_root: word) -> felt
+
+    # Initial stack
+    # => [sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
+
+    # get SERIAL of this note
+    exec.active_note::get_serial_number
+    # => [serial_num, sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
+ 
+    # store user account id
+    mem_storew_le.INPUT_NOTE_SERIAL dropw
+
+    # store user account id
+    mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
+
+    ### mem store asset in, min asset out
+    mem_storew_le.ASSET_OUT_WORD dropw mem_storew_le.ASSET_IN_WORD dropw
+
     ### store note metadata in memory
-    mem_store.RETURN_NOTE_TAG mem_store.RETURN_NOTE_TYPE mem_storew_le.RETURN_NOTE_RECIPIENT_WORD dropw
+    mem_store.RETURN_NOTE_TAG mem_store.RETURN_NOTE_TYPE mem_storew_le.P2ID_SCRIPT_ROOT dropw
+
     mem_load.ASSET_OUT_ID_SUFFIX mem_load.ASSET_OUT_ID_PREFIX 
     exec.get_reserve_by_asset_id
     # => [reserve_out]
@@ -286,12 +314,30 @@ pub proc swap_tokens_for_exact_tokens(asset_out: word, max_asset_in: word, deadl
     drop
 end
 
+proc compute_return_note_serial_num() -> word
+    padw mem_loadw_le.INPUT_NOTE_SERIAL
+    # => [INPUT_NOTE_SERIAL]
+    add.1
+    # => [SERIAL_NUM]
+end
 
 #### HELPER PROCEDURES
 @locals(1)
 proc _create_p2id_note() -> felt
-    # loc.0: note_id
-    padw mem_loadw_le.RETURN_NOTE_RECIPIENT_WORD  mem_load.RETURN_NOTE_TYPE mem_load.RETURN_NOTE_TAG
+    padw mem_loadw_le.P2ID_SCRIPT_ROOT
+   
+    exec.compute_return_note_serial_num
+    mem_load.USER_ACCOUNT_ID_SUFFIX mem_store.0
+    mem_load.USER_ACCOUNT_ID_PREFIX mem_store.1
+    push.2 push.0
+
+    ## => [inputs_ptr, number_of_inputs, RETURN_SERIAL_NUM, P2ID_SCRIPT_ROOT]
+    exec.note::build_recipient
+    # => [RECIPIENT]
+
+    mem_load.RETURN_NOTE_TYPE mem_load.RETURN_NOTE_TAG
+    # => [note_type, note_tag, RECIPIENT]
+
     exec.output_note::create loc_store.0 
     # => []
 

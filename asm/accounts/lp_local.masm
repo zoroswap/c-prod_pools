@@ -1,4 +1,6 @@
 use miden::core::math::u64
+use miden::core::crypto::hashes::rpo256
+use miden::protocol::note
 use miden::protocol::native_account
 use miden::protocol::active_account
 use miden::protocol::output_note
@@ -11,7 +13,8 @@ use zoro::storage_utils
 const MINIMUM_LIQUIDITY = 100
 
 ### MEMORY LOCATIONS
-const DYNAMIC_PROC_ADDR = 4
+const SCRATCH_SPACE = 0
+const DYNAMIC_PROC_ADDR = 16
 
 const USER_ACCOUNT_ID_WORD = 20
 const USER_ACCOUNT_ID_PREFIX = 20
@@ -21,7 +24,8 @@ const NOTE_DETAILS_WORD = 24
 const NOTE_TAG = 24
 const NOTE_TYPE = 25
 
-const NOTE_RECIPIENT_WORD = 28
+const OUTPUT_NOTE_ROOT_HASH = 28
+const INPUT_NOTE_SERIAL = 32
 
 ### ERROR CODES
 const ERR_ZERO_ADDRESS = "Zero address"
@@ -434,16 +438,18 @@ end
 #! Outputs: [amount_0_out, amount_1_out]
 #!
 @locals(6)
-pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, note_tag: felt, note_type: felt, return_note_recipient: word) -> (felt, felt)
+pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, note_tag: felt, note_type: felt, output_note_root: word, input_note_serial: word) -> (felt, felt)
     # loc.0: LP_AMOUNT  = EMPTY, EMPTY, EMPTY, LP_AMOUNT loc.3 lp_amount
     # loc.4: amount_0_out
     # loc.5: amount_1_out
     ## LP_AMOUNT to local
     loc_storew_le.0 dropw 
-    ## user, note tag and type tomemory
-    mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX mem_store.NOTE_TAG mem_store.NOTE_TYPE
-    ## RECIPIENT to memroy
-    mem_storew_le.NOTE_RECIPIENT_WORD dropw
+    ## user,  note tag and type, output note root hash, and input note serial to memory
+    mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX 
+    mem_store.NOTE_TAG mem_store.NOTE_TYPE
+    mem_storew_le.OUTPUT_NOTE_ROOT_HASH dropw
+    mem_storew_le.INPUT_NOTE_SERIAL dropw
+    
     # => [] 
     ### get_lp_amount_out (total_supply: felt, amount_0: felt, amount_1: felt, reserve_0: felt, reserve_1: felt)
     exec.get_reserves
@@ -477,15 +483,6 @@ end
 
 
 ### MEMORY SETTING PROCEDURES aka. global variables
-proc mem_setw_recipient(recipient: word)
-    mem_storew_le.NOTE_RECIPIENT_WORD dropw
-end
-proc mem_set_note_tag(note_tag: felt)
-    mem_store.NOTE_TAG
-end
-proc mem_set_note_type(note_type: felt)
-    mem_store.NOTE_TYPE
-end
 proc mem_set_user_id(user_id_prefix: felt, user_id_suffix: felt)
     mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
 end
@@ -502,21 +499,29 @@ proc mem_get_note_type() -> felt
     mem_load.NOTE_TYPE
     exec.sys::truncate_stack
 end
-proc mem_get_recipient() -> word
-    padw mem_load.NOTE_RECIPIENT_WORD
-    exec.sys::truncate_stack
-end
+
 
 @locals(8)
 proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     # loc.0: amount_0_out
     # loc.1: amount_1_out
-    # loc.2: note_id
     # loc.3: asset_0_id_prefix
     # loc.4: asset_0_id_suffix
  
     loc_store.0 loc_store.1
-    padw mem_loadw_le.NOTE_RECIPIENT_WORD  mem_load.NOTE_TYPE mem_load.NOTE_TAG
+    ##### compute recipient hash
+    padw mem_loadw_le.OUTPUT_NOTE_ROOT_HASH exec.compute_return_note_serial_num
+    # => [WITHDRAW_SERIAL_NUM, OUTPUT_NOTE_ROOT_HASH]
+
+    mem_load.USER_ACCOUNT_ID_SUFFIX mem_store.0
+    mem_load.USER_ACCOUNT_ID_PREFIX mem_store.1
+#
+    push.2 push.0
+    ## => [inputs_ptr, number_of_inputs, WITHDRAW_SERIAL_NUM, OUTPUT_NOTE_ROOT_HASH]
+    exec.note::build_recipient
+    # => [RECIPIENT]
+    mem_load.NOTE_TYPE mem_load.NOTE_TAG
+    # => [note_type, note_tag, RECIPIENT]
     exec.output_note::create
     # => [note_id]
     loc_store.2
@@ -528,7 +533,7 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     push.0 movdn.2 loc_load.1 movdn.3 
     # => [ASSET1_OUT]
     exec.native_account::remove_asset 
-    # => [ASSET1_OUT]
+    # => [ASSET1_uOUT]
     loc_load.2 movdn.4
     # => [ASSET1_OUT, note_id]
     exec.output_note::add_asset
@@ -542,141 +547,13 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     loc_load.2 movdn.4
     # => [ASSET0_OUT, note_id]
     exec.output_note::add_asset
-    
     # => []
 end
 
 
-#    # => [amount_0_out, amount_1_out]
-#    loc_store.5 loc_store.6
-#    ### check if initial deposit
-#   
-#    ### mint to user
-#    
-#    mem_load.USER_ACCOUNT_ID_SUFFIX mem_load.USER_ACCOUNT_ID_PREFIX
-#    loc_load.3
-#    # => [lp_amount,user_id_prefix, user_id_suffix]
-#    exec.burn
-#
-#    ### add assets back to user
-#    ### reserve needs to be updated 
-#    #padw padw padw loc_loadw_be.0 exec.receive_asset
-#    #padw padw padw loc_loadw_be.4 exec.receive_asset
-#    #@todo - move to note valdiate 
-#    #@todo - also simulate_withdraw a
-#    padw loc_loadw_le.4 exec.native_account::add_asset dropw    
-#    padw loc_loadw_le.5 exec.native_account::add_asset dropw
-#    ## make sure asset order correct
-#    loc_load.7 loc_load.3
-#    # => [amount_0, amount_1]
-#    exec.add_to_reserve
-#end
-
-##! Inputs:  [user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET_OUT, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage]
-#pub proc withdraw
-#    dupw
-#    # => [user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET_OUT, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0]
-#    dupw.2
-#    # => [ASSET_OUT, user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET_OUT, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0]
-#    exec.get_user_deposit_key
-#    # => [KEY, lp_withdraw_amount, 0, user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0 ]
-#    mem_storew_be.WITHDRAW_KEY_LOC
-#    exec.get_user_deposit
-#    # => [user_lp_shares, lp_withdraw_amount, 0, user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0]
-#    swap sub
-#    # => [new_user_lp_shares, 0, user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0 ]
-#    dup
-#    # => [new_user_lp_shares, new_user_lp_shares, 0, user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0]
-#    padw mem_loadw_be.WITHDRAW_KEY_LOC
-#    exec.get_user_deposit
-#    # => [user_lp_shares, new_user_lp_shares, new_user_lp_shares, 0, user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0]
-#    lt assert.err=ERR_LP_WITHDRAW_AMOUNT_EXCEEDS_USER_LP_SHARES
-#    # => [new_user_lp_shares, 0, user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0]
-#
-#    # store new user lp shares
-#    push.0.0.0
-#    # => [NEW_USER_LP_SHARES, 0, user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0]
-#    padw mem_loadw_be.WITHDRAW_KEY_LOC
-#    push.USER_DEPOSITS_MAPPING_SLOT[0..2]
-#    # => [slot_id_prefix, slot_id_suffix, KEY, NEW_USER_LP_SHARES]
-#    exec.native_account::set_map_item
-#    dropw drop
-#    # => [user_id_prefix, user_id_suffix, lp_withdraw_amount, 0, ASSET, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0]
-#    drop drop swap drop
-#    mem_store.LP_SHARES_AMOUNT_ADDR
-#
-#
-#    mem_load.LP_SHARES_AMOUNT_ADDR push.0.0.0
-#    padw mem_loadw_be.WITHDRAW_KEY_LOC
-#    exec.get_lp_shares_total_supply_key
-#    # => [KEY, SHARE_AMOUNT]
-#    push.USER_DEPOSITS_MAPPING_SLOT[0..2]
-#    # => [slot_id_prefix, slot_id_suffix, KEY, SHARE_AMOUNT]
-#    exec.sub_from_map_item
-#    # => [ ASSET_OUT, noteid, 0,0,0, liabilities, reserve, reserve_with_slippage, 0]
-#    exec.move_asset_to_note
-#    dropw dropw dropw
-#end
-
-
-##! Atomically increments a storage map entry: map[KEY] += VALUE.
-##! Reads the current value via get_map_item, adds VALUE, writes back via set_map_item.
-##!
-##! Inputs: [slot_id_prefix, slot_id_suffix, KEY, VALUE]
-##! Outputs: []
-#proc add_to_map_item
-#    # Save slot ID to memory
-#    mem_store.HELPER_SLOT_ID_PREFIX_LOC
-#    mem_store.HELPER_SLOT_ID_SUFFIX_LOC
-#    # => [KEY, VALUE]
-#
-#    # Duplicate KEY for second call
-#    dupw
-#    # => [KEY, KEY, VALUE]
-#
-#    # Load slot ID and get current map value
-#    mem_load.HELPER_SLOT_ID_SUFFIX_LOC
-#    mem_load.HELPER_SLOT_ID_PREFIX_LOC
-#    # => [slot_id_prefix, slot_id_suffix, KEY, KEY, VALUE]
-#    exec.active_account::get_map_item drop drop drop
-#    # => [old_amount, KEY, VALUE]
-#
-#    # Add new amount to old amount
-#    movup.8 add
-#    # => [new_amount, KEY, 0, 0, 0]
-#    movdn.7
-#    # => [KEY, 0, 0, 0, new_amount]
-#    # => [KEY, NEW_VALUE]
-#
-#    # Load slot ID and set map item
-#    mem_load.HELPER_SLOT_ID_SUFFIX_LOC
-#    mem_load.HELPER_SLOT_ID_PREFIX_LOC
-#    # => [slot_id_prefix, slot_id_suffix, KEY, NEW_VALUE]
-#    exec.native_account::set_map_item dropw
-#    # => []
-#end
-
-
-#! Adds the provided asset to the active account.
-#!
-#! Inputs:  [ASSET, pad(4, pad(8)]
-#! Outputs: [pad(16)]
-#!
-#! Where:
-#! - ASSET is the asset to be received, can be fungible or non-fungible
-#!
-#! Panics if:
-#! - the same non-fungible asset already exists in the account.
-#! - adding a fungible asset would result in amount overflow, i.e.,
-#!   the total amount would be greater than 2^63.
-#!
-#! Invocation: call
-#pub proc receive_asset
-#    exec.native_account::add_asset
-#    # => [ASSET', reserve, reserve_with_slippage, liabilities, 0, pad(8)]
-#
-#    procref.validate_and_update_state mem_storew_be.DYNAMIC_PROC_ADDR dropw push.DYNAMIC_PROC_ADDR
-#    dynexec
-#
-#    # => [pad(16)]
-#end
+proc compute_return_note_serial_num() -> word
+    padw mem_loadw_le.INPUT_NOTE_SERIAL
+    # => [INPUT_NOTE_SERIAL]
+    add.1
+    # => [SERIAL_NUM]
+end

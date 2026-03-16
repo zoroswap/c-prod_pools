@@ -6,7 +6,7 @@ use miden_client::{
         StorageSlot, StorageSlotName,
     },
     asset::{AssetVault, FungibleAsset, TokenSymbol},
-    auth::{AuthFalcon512Rpo, AuthSecretKey},
+    auth::{AuthFalcon512Rpo, AuthSecretKey, NoAuth},
     builder::ClientBuilder,
     keystore::FilesystemKeyStore,
     note::{
@@ -22,7 +22,10 @@ use miden_standards::account::{faucets::BasicFungibleFaucet, wallets::BasicWalle
 use rand::RngCore;
 
 use miden_client_sqlite_store::{ClientBuilderSqliteExt, SqliteStore};
-use miden_protocol::{account::AccountComponent, transaction::TransactionKernel};
+use miden_protocol::{
+    FieldElement, account::AccountComponent, crypto::hash::rpo::Rpo256,
+    transaction::TransactionKernel,
+};
 
 use miden_standards::code_builder::CodeBuilder;
 use miden_standards::note::utils::build_p2id_recipient;
@@ -763,4 +766,31 @@ pub async fn wait_for_note(client: &mut MidenClient, expected: &Note) -> Result<
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
     Ok(())
+}
+
+pub fn get_return_note_serial(input_note_serial: Word, user_id: AccountId) -> Word {
+    // let user_id_word = Word::new([
+    //     Felt::ZERO,
+    //     Felt::ZERO,
+    //     user_id.prefix().as_felt(),
+    //     user_id.suffix(),
+    // ]);
+    // let mut serial_reversed = input_note_serial.clone();
+    // serial_reversed.reverse();
+
+    // let mut user_id_word_reversed = user_id_word.clone();
+    // user_id_word_reversed.reverse();
+    // // Rpo256::merge(&[user_id_word, serial_reversed])
+    // Rpo256::merge(&[user_id_word_reversed, input_note_serial])
+    [
+        input_note_serial[3] + Felt::new(1),
+        input_note_serial[2],
+        input_note_serial[1],
+        input_note_serial[0],
+        // input_note_serial[0],
+        // input_note_serial[1],
+        // input_note_serial[2],
+        // input_note_serial[3] + Felt::new(1),
+    ]
+    .into()
 }
