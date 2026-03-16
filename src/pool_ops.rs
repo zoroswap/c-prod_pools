@@ -1,4 +1,4 @@
-use crate::utils::{create_library, read_masm_to_string};
+use crate::utils::{create_library, get_p2id_root_hash, read_masm_to_string};
 use anyhow::{Result, anyhow};
 use miden_client::{
     Felt, Word,
@@ -204,10 +204,7 @@ pub fn build_lp_local_deposit_note(
 ) -> Result<Note> {
     let script = compile_lp_local_deposit_note_script(lp_local_library)?;
 
-    let inputs = NoteInputs::new(vec![
-        user_id.prefix().as_felt().into(),
-        user_id.suffix().into(),
-    ])?;
+    let inputs = NoteInputs::new(vec![user_id.prefix().as_felt(), user_id.suffix()])?;
 
     let assets = NoteAssets::new(vec![token0_asset.into(), token1_asset.into()])?;
 
@@ -254,8 +251,9 @@ pub fn build_lp_local_withdraw_note(
     sender: AccountId,
     return_note_tag: Felt,
     return_note_type: Felt,
-    return_recipient_digest: Word,
+    withdraw_note_serial: Word,
 ) -> Result<Note> {
+    let return_note_root_hash = get_p2id_root_hash();
     let script = compile_lp_local_withdraw_note_script(lp_local_library)?;
 
     let inputs = NoteInputs::new(vec![
@@ -267,10 +265,10 @@ pub fn build_lp_local_withdraw_note(
         return_note_type,
         Felt::ZERO,
         Felt::ZERO,
-        return_recipient_digest[0],
-        return_recipient_digest[1],
-        return_recipient_digest[2],
-        return_recipient_digest[3],
+        return_note_root_hash[0],
+        return_note_root_hash[1],
+        return_note_root_hash[2],
+        return_note_root_hash[3],
     ])?;
 
     let assets = NoteAssets::new(vec![])?;
@@ -278,15 +276,7 @@ pub fn build_lp_local_withdraw_note(
     let tag = NoteTag::with_account_target(pool_id);
     let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
 
-    let mut seed = [0; 32];
-    let mut std_rng = StdRng::from_os_rng();
-    std_rng.fill(&mut seed);
-    let mut rng = StdRng::from_seed(seed);
-    let mut seed = [0u8; 32];
-    rng.fill(&mut seed);
-    let serial_num = Word::from_random_bytes(&seed)
-        .ok_or(anyhow!("Error generating new word, no word was produced"))?;
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
+    let recipient = NoteRecipient::new(withdraw_note_serial, script, inputs);
     Ok(Note::new(assets, metadata, recipient))
 }
 
@@ -304,117 +294,6 @@ pub fn compile_pool_note_script(
         .assemble_program(source)
         .map_err(|e| anyhow!("Failed to compile {procedure_name} note script: {e:?}"))?;
     Ok(NoteScript::new(program))
-}
-
-/// Builds a deposit note targeting the pool.
-///
-/// For first deposits (`current_total_lp == 0`), the sqrt hint is included in note inputs.
-pub fn build_deposit_note(
-    pool_id: AccountId,
-    pool_library: &Library,
-    token0_asset: FungibleAsset,
-    token1_asset: FungibleAsset,
-    min_lp_out: u64,
-    current_total_lp: u64,
-    sender: AccountId,
-    rng: &mut impl FeltRng,
-) -> Result<Note> {
-    let script = compile_pool_note_script(pool_library, "deposit")?;
-
-    let sqrt_hint = if current_total_lp == 0 {
-        let product = token0_asset.amount() as u128 * token1_asset.amount() as u128;
-        isqrt(product) as u64
-    } else {
-        0
-    };
-
-    let inputs = NoteInputs::new(vec![
-        Felt::new(1),
-        Felt::new(min_lp_out),
-        Felt::new(sqrt_hint),
-    ])?;
-
-    let assets = NoteAssets::new(vec![token0_asset.into(), token1_asset.into()])?;
-
-    let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-
-    let serial_num = rng.draw_word();
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
-    Ok(Note::new(assets, metadata, recipient))
-}
-
-/// Builds a swap note targeting the pool.
-pub fn build_swap_note(
-    pool_id: AccountId,
-    pool_library: &Library,
-    input_asset: FungibleAsset,
-    min_amount_out: u64,
-    sender: AccountId,
-    output_tag: Felt,
-    output_note_type: Felt,
-    output_recipient_digest: Word,
-    rng: &mut impl FeltRng,
-) -> Result<Note> {
-    let script = compile_pool_note_script(pool_library, "swap")?;
-
-    let inputs = NoteInputs::new(vec![
-        Felt::new(0),
-        Felt::new(min_amount_out),
-        output_tag,
-        Felt::ZERO,
-        output_note_type,
-        Felt::ZERO,
-        output_recipient_digest[0],
-        output_recipient_digest[1],
-        output_recipient_digest[2],
-        output_recipient_digest[3],
-    ])?;
-
-    let assets = NoteAssets::new(vec![input_asset.into()])?;
-
-    let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-
-    let serial_num = rng.draw_word();
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
-    Ok(Note::new(assets, metadata, recipient))
-}
-
-/// Builds a withdraw note targeting the pool (carries no assets).
-pub fn build_withdraw_note(
-    pool_id: AccountId,
-    pool_library: &Library,
-    lp_amount: u64,
-    sender: AccountId,
-    output_tag: Felt,
-    output_note_type: Felt,
-    output_recipient_digest: Word,
-    rng: &mut impl FeltRng,
-) -> Result<Note> {
-    let script = compile_pool_note_script(pool_library, "withdraw")?;
-
-    let inputs = NoteInputs::new(vec![
-        Felt::new(2),
-        Felt::new(lp_amount),
-        output_tag,
-        Felt::ZERO,
-        output_note_type,
-        Felt::ZERO,
-        output_recipient_digest[0],
-        output_recipient_digest[1],
-        output_recipient_digest[2],
-        output_recipient_digest[3],
-    ])?;
-
-    let assets = NoteAssets::new(vec![])?;
-
-    let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-
-    let serial_num = rng.draw_word();
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
-    Ok(Note::new(assets, metadata, recipient))
 }
 
 /// Compiles the xyk_pool library with lp_local, math, and storage_utils as dependencies.
@@ -469,38 +348,28 @@ pub fn build_xyk_swap_exact_tokens_for_tokens_note(
     sender: AccountId,
     return_note_tag: Felt,
     return_note_type: Felt,
-    return_recipient_digest: Word,
+    serial_num: Word,
 ) -> Result<Note> {
     let script = compile_xyk_swap_exact_tokens_for_tokens_note_script(xyk_pool_library)?;
-
+    let p2id_root = get_p2id_root_hash();
     let inputs = NoteInputs::new(vec![
         min_output_asset.faucet_id().prefix().as_felt(),
-        min_output_asset.faucet_id().suffix().into(),
+        min_output_asset.faucet_id().suffix(),
         Felt::ZERO,
         Felt::new(min_output_asset.amount()),
         Felt::new(deadline),
         return_note_tag,
         return_note_type,
         Felt::ZERO,
-        return_recipient_digest[0],
-        return_recipient_digest[1],
-        return_recipient_digest[2],
-        return_recipient_digest[3],
+        p2id_root[0],
+        p2id_root[1],
+        p2id_root[2],
+        p2id_root[3],
     ])?;
 
     let assets = NoteAssets::new(vec![input_asset.into()])?;
-
     let tag = NoteTag::with_account_target(pool_id);
     let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-
-    let mut seed = [0; 32];
-    let mut std_rng = StdRng::from_os_rng();
-    std_rng.fill(&mut seed);
-    let mut rng = StdRng::from_seed(seed);
-    let mut seed = [0u8; 32];
-    rng.fill(&mut seed);
-    let serial_num =
-        Word::from_random_bytes(&seed).ok_or(anyhow!("Error generating random serial number"))?;
     let recipient = NoteRecipient::new(serial_num, script, inputs);
     Ok(Note::new(assets, metadata, recipient))
 }
@@ -537,38 +406,28 @@ pub fn build_xyk_swap_tokens_for_exact_tokens_note(
     sender: AccountId,
     return_note_tag: Felt,
     return_note_type: Felt,
-    return_recipient_digest: Word,
+    serial_num: Word,
 ) -> Result<Note> {
     let script = compile_xyk_swap_tokens_for_exact_tokens_note_script(xyk_pool_library)?;
-
+    let p2id_root = get_p2id_root_hash();
     let inputs = NoteInputs::new(vec![
         exact_output_asset.faucet_id().prefix().as_felt(),
-        exact_output_asset.faucet_id().suffix().into(),
+        exact_output_asset.faucet_id().suffix(),
         Felt::ZERO,
         Felt::new(exact_output_asset.amount()),
         Felt::new(deadline),
         return_note_tag,
         return_note_type,
         Felt::ZERO,
-        return_recipient_digest[0],
-        return_recipient_digest[1],
-        return_recipient_digest[2],
-        return_recipient_digest[3],
+        p2id_root[0],
+        p2id_root[1],
+        p2id_root[2],
+        p2id_root[3],
     ])?;
 
     let assets = NoteAssets::new(vec![max_input_asset.into()])?;
-
     let tag = NoteTag::with_account_target(pool_id);
     let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-
-    let mut seed = [0; 32];
-    let mut std_rng = StdRng::from_os_rng();
-    std_rng.fill(&mut seed);
-    let mut rng = StdRng::from_seed(seed);
-    let mut seed = [0u8; 32];
-    rng.fill(&mut seed);
-    let serial_num =
-        Word::from_random_bytes(&seed).ok_or(anyhow!("Error generating random serial number"))?;
     let recipient = NoteRecipient::new(serial_num, script, inputs);
     Ok(Note::new(assets, metadata, recipient))
 }

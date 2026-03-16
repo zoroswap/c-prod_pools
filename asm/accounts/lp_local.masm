@@ -1,4 +1,6 @@
 use miden::core::math::u64
+use miden::core::crypto::hashes::rpo256
+use miden::protocol::note
 use miden::protocol::native_account
 use miden::protocol::active_account
 use miden::protocol::output_note
@@ -11,7 +13,18 @@ use zoro::storage_utils
 const MINIMUM_LIQUIDITY = 100
 
 ### MEMORY LOCATIONS
-const DYNAMIC_PROC_ADDR = 4
+const SCRATCH_SPACE = 0
+
+const OUTPUT_NOTE_INPUTS_START = SCRATCH_SPACE
+const OUTPUT_NOTE_INPUT_0 = SCRATCH_SPACE
+const OUTPUT_NOTE_INPUT_1 = SCRATCH_SPACE + 1
+const OUTPUT_NOTE_INPUT_2 = SCRATCH_SPACE + 2
+const OUTPUT_NOTE_INPUT_3 = SCRATCH_SPACE + 3
+const OUTPUT_NOTE_INPUT_4 = SCRATCH_SPACE + 4
+const OUTPUT_NOTE_INPUT_5 = SCRATCH_SPACE + 5
+
+
+const DYNAMIC_PROC_ADDR = 16
 
 const USER_ACCOUNT_ID_WORD = 20
 const USER_ACCOUNT_ID_PREFIX = 20
@@ -20,7 +33,9 @@ const USER_ACCOUNT_ID_SUFFIX = 21
 const NOTE_DETAILS_WORD = 24
 const NOTE_TAG = 24
 const NOTE_TYPE = 25
-const NOTE_RECIPIENT_WORD = 28
+
+const OUTPUT_NOTE_ROOT_HASH = 28
+const INPUT_NOTE_SERIAL = 32
 
 ### ERROR CODES
 const ERR_ZERO_ADDRESS = "Zero address"
@@ -32,7 +47,9 @@ const ASSETS_MAPPING_SLOT = word("zoro::lp_local::assets_mapping")
 const RESERVE_SLOT = word("zoro::lp_local::reserve")
 const TOTAL_SUPPLY_SLOT = word("zoro::lp_local::total_supply")
 const USER_DEPOSITS_MAPPING_SLOT = word("zoro::lp_local::user_deposits_mapping")
+
 const REGISTRY_SLOT = word("zoro::lp_local::registry")
+const REGISTER_NOTE_ROOT_SLOT = word("zoro::lp_local::register_note_root")
 
 #################
 #! Computes the LP amount out for a deposit of amount_0 and amount_1.
@@ -142,7 +159,7 @@ pub proc set_reserves(reserve_0: felt, reserve_1: felt)
 end
 
 pub proc get_pool_asset_ids() -> word
-    push.0.0.0.0 push.ASSETS_MAPPING_SLOT[0..2] exec.active_account::get_map_item
+    padw push.ASSETS_MAPPING_SLOT[0..2] exec.active_account::get_map_item
     exec.sys::truncate_stack
 end
 
@@ -403,8 +420,8 @@ pub proc deposit
         push.0.0 push.MINIMUM_LIQUIDITY
         exec.mint
 
-        # send register pool note to the registry
-        # REGISTRY_SLOT 
+        ### send register pool note to the registry
+        exec.create_register_pool_note 
     end
     ### mint to user
     
@@ -432,16 +449,18 @@ end
 #! Outputs: [amount_0_out, amount_1_out]
 #!
 @locals(6)
-pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, note_tag: felt, note_type: felt, return_note_recipient: word) -> (felt, felt)
+pub proc withdraw(lp_amount: word, user_id_prefix: felt, user_id_suffix: felt, note_tag: felt, note_type: felt, output_note_root: word, input_note_serial: word) -> (felt, felt)
     # loc.0: LP_AMOUNT  = EMPTY, EMPTY, EMPTY, LP_AMOUNT loc.3 lp_amount
     # loc.4: amount_0_out
     # loc.5: amount_1_out
     ## LP_AMOUNT to local
     loc_storew_le.0 dropw 
-    ## user, note tag and type tomemory
-    mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX mem_store.NOTE_TAG mem_store.NOTE_TYPE
-    ## RECIPIENT to memroy
-    mem_storew_le.NOTE_RECIPIENT_WORD dropw
+    ## user,  note tag and type, output note root hash, and input note serial to memory
+    mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX 
+    mem_store.NOTE_TAG mem_store.NOTE_TYPE
+    mem_storew_le.OUTPUT_NOTE_ROOT_HASH dropw
+    mem_storew_le.INPUT_NOTE_SERIAL dropw
+    
     # => [] 
     ### get_lp_amount_out (total_supply: felt, amount_0: felt, amount_1: felt, reserve_0: felt, reserve_1: felt)
     exec.get_reserves
@@ -475,15 +494,6 @@ end
 
 
 ### MEMORY SETTING PROCEDURES aka. global variables
-proc mem_setw_recipient(recipient: word)
-    mem_storew_le.NOTE_RECIPIENT_WORD dropw
-end
-proc mem_set_note_tag(note_tag: felt)
-    mem_store.NOTE_TAG
-end
-proc mem_set_note_type(note_type: felt)
-    mem_store.NOTE_TYPE
-end
 proc mem_set_user_id(user_id_prefix: felt, user_id_suffix: felt)
     mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
 end
@@ -500,21 +510,29 @@ proc mem_get_note_type() -> felt
     mem_load.NOTE_TYPE
     exec.sys::truncate_stack
 end
-proc mem_get_recipient() -> word
-    padw mem_load.NOTE_RECIPIENT_WORD
-    exec.sys::truncate_stack
-end
+
 
 @locals(8)
 proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     # loc.0: amount_0_out
     # loc.1: amount_1_out
-    # loc.2: note_id
     # loc.3: asset_0_id_prefix
     # loc.4: asset_0_id_suffix
  
     loc_store.0 loc_store.1
-    padw mem_loadw_le.NOTE_RECIPIENT_WORD  mem_load.NOTE_TYPE mem_load.NOTE_TAG
+    ##### compute recipient hash
+    padw mem_loadw_le.OUTPUT_NOTE_ROOT_HASH exec.compute_return_note_serial_num
+    # => [WITHDRAW_SERIAL_NUM, OUTPUT_NOTE_ROOT_HASH]
+
+    mem_load.USER_ACCOUNT_ID_SUFFIX mem_store.0
+    mem_load.USER_ACCOUNT_ID_PREFIX mem_store.1
+#
+    push.2 push.0
+    ## => [inputs_ptr, number_of_inputs, WITHDRAW_SERIAL_NUM, OUTPUT_NOTE_ROOT_HASH]
+    exec.note::build_recipient
+    # => [RECIPIENT]
+    mem_load.NOTE_TYPE mem_load.NOTE_TAG
+    # => [note_type, note_tag, RECIPIENT]
     exec.output_note::create
     # => [note_id]
     loc_store.2
@@ -526,7 +544,7 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     push.0 movdn.2 loc_load.1 movdn.3 
     # => [ASSET1_OUT]
     exec.native_account::remove_asset 
-    # => [ASSET1_OUT]
+    # => [ASSET1_uOUT]
     loc_load.2 movdn.4
     # => [ASSET1_OUT, note_id]
     exec.output_note::add_asset
@@ -540,42 +558,39 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     loc_load.2 movdn.4
     # => [ASSET0_OUT, note_id]
     exec.output_note::add_asset
-    
     # => []
 end
 
-@locals(5)
-pub proc order_assets(asset_0_id_prefix: felt, asset_0_id_suffix: felt, asset_1_id_prefix: felt, asset_1_id_suffix: felt) -> word
-    # loc.0: asset_0_id_prefix
-    # loc.1: asset_0_id_suffix
-    # loc.2: asset_1_id_prefix
-    # loc.3: asset_1_id_suffix
-    # loc.4: comparison result
-    loc_store.0 loc_store.1 loc_store.2 loc_store.3
 
-    ##### compare prefixes
-    loc_load.0 loc_load.2 exec.math::compare_felts loc_store.4 loc_load.4
-    # => [prefix comparison result]
-    eq.1 if.true # prefix 1 smaller -> keep order
-        padw loc_loadw_le.0
-    else 
-        loc_load.4 eq.2 if.true # prefix 1 bigger -> reverse order
-            loc_load.1 loc_load.0 loc_load.3 loc_load.2
-        else # prefixes are equal - compare suffixes
-            loc_load.1 loc_load.3 exec.math::compare_felts loc_store.4 loc_load.4
-            # => [suffix comparison result]
-            eq.1 if.true # suffix 1 smaller -> keep order
-                padw loc_loadw_le.0
-            else
-                loc_load.4 eq.2 if.true # suffix 1 bigger -> reverse order
-                    loc_load.1 loc_load.0 loc_load.3 loc_load.2
-                else # suffixes are equal and prefixes are equal - both are the same asset - revert
-                    push.0 assert.err=ERR_BOTH_ASSETS_ARE_THE_SAME
-                end
-                
-            end
-        end
-    end
-    exec.sys::truncate_stack
+proc compute_return_note_serial_num() -> word
+    padw mem_loadw_le.INPUT_NOTE_SERIAL
+    # => [INPUT_NOTE_SERIAL]
+    add.1
+    # => [SERIAL_NUM]
 end
 
+
+proc create_register_pool_note()
+    ### store note inputs in memory
+    exec.get_pool_asset_ids
+    # =>[asset_0_id_prefix, asset_0_id_suffix, asset_1_id_prefix, asset_1_id_suffix]
+    exec.active_account::get_id
+    # => [pool_id_prefix, pool_id_suffix, asset_0_id_prefix, asset_0_id_suffix, asset_1_id_prefix, asset_1_id_suffix]
+    mem_store.OUTPUT_NOTE_INPUT_0 mem_store.OUTPUT_NOTE_INPUT_1 mem_store.OUTPUT_NOTE_INPUT_2 
+    mem_store.OUTPUT_NOTE_INPUT_3 mem_store.OUTPUT_NOTE_INPUT_4 mem_store.OUTPUT_NOTE_INPUT_5
+    # => []
+
+    ### load root hash and serial
+    padw mem_loadw_le.REGISTER_NOTE_ROOT_HASH
+    exec.compute_return_note_serial_num
+    ## => [REGISTER_SERIAL_NUM, REGISTER_NOTE_ROOT_HASH]
+    ### push nr of inputs
+    push.6
+    push.OUTPUT_NOTE_INPUTS_START
+    ## => [inputs_ptr, number_of_inputs, REGISTER_SERIAL_NUM, REGISTER_NOTE_ROOT_HASH]
+    exec.note::build_recipient
+    # => [RECIPIENT]
+    exec.output_note::create
+    # => [note_id]
+    drop
+end

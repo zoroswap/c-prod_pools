@@ -13,24 +13,23 @@ begin
     # note_inputs layout (dest_ptr = 0):
     #   mem[0] = [lp_amount, 0, 0, 0]           (word 0)
     #   mem[4] = [note_tag, note_type, 0, 0]     (word 1)
-    #   mem[8] = [r0, r1, r2, r3]                (word 2 - recipient digest)
+    #   mem[8] = [OUTPUT_NOTE_ROOT_HASH]         (word 2)
 
-    # Push recipient word (word 2)
+    # get SERIAL of this note
+    exec.active_note::get_serial_number
+    # => [SERIAL_NUM]
+    # load OUTPUT NOTE ROOT HASH 
     padw mem_loadw_be.8
-    # => [RECIPIENT_WORD]
-
-    # Push note_type, note_tag
+    # => [OUTPUT_NOTE_ROOT_HASH, SERIAL_NUM]
+    # load note_type and note_tag
     mem_load.5 mem_load.4
-    # => [note_tag, note_type, RECIPIENT_WORD]
-
-    # Push user_id (sender)
+    # => [note_tag, note_type, OUTPUT_NOTE_ROOT_HASH, SERIAL_NUM]
+    # load user_id (sender)
     exec.active_note::get_sender
-    # => [sender_prefix, sender_suffix, note_tag, note_type, RECIPIENT_WORD]
-
-    # Push LP_AMOUNT as a word [0, 0, 0, lp_amount]
+    # => [sender_prefix, sender_suffix, note_tag, note_type, OUTPUT_NOTE_ROOT_HASH]
+    # load LP_AMOUNT as a word [0, 0, 0, lp_amount]
     padw mem_loadw_le.0
-    # => [LP_AMOUNT_WORD, sender_prefix, sender_suffix, note_tag, note_type, RECIPIENT_WORD]
-
+    # => [LP_AMOUNT_WORD, sender_prefix, sender_suffix, note_tag, note_type, OUTPUT_NOTE_ROOT_HASH, SERIAL_NUM]
     call.lp_local::withdraw
     exec.sys::truncate_stack
 end
