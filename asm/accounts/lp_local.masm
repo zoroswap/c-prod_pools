@@ -20,21 +20,19 @@ const USER_ACCOUNT_ID_SUFFIX = 21
 const NOTE_DETAILS_WORD = 24
 const NOTE_TAG = 24
 const NOTE_TYPE = 25
-
 const NOTE_RECIPIENT_WORD = 28
 
 ### ERROR CODES
 const ERR_ZERO_ADDRESS = "Zero address"
 const ERR_UNKNOWN_ASSET = "Unknown asset"
-
 const ERR_BOTH_ASSETS_ARE_THE_SAME = "Both assets are the same"
-
 
 ### STORAGE SLOTS
 const ASSETS_MAPPING_SLOT = word("zoro::lp_local::assets_mapping")
 const RESERVE_SLOT = word("zoro::lp_local::reserve")
 const TOTAL_SUPPLY_SLOT = word("zoro::lp_local::total_supply")
 const USER_DEPOSITS_MAPPING_SLOT = word("zoro::lp_local::user_deposits_mapping")
+const REGISTRY_SLOT = word("zoro::lp_local::registry")
 
 #################
 #! Computes the LP amount out for a deposit of amount_0 and amount_1.
@@ -78,7 +76,6 @@ pub proc get_lp_amount_out(total_supply: felt, amount_0: felt, amount_1: felt, r
         # => [lp_amount_out]
         ### return lp_amount_out
     end
-
     exec.sys::truncate_stack
 end
 
@@ -130,7 +127,6 @@ end
 pub proc total_supply#() -> felt
     push.TOTAL_SUPPLY_SLOT[0..2] exec.active_account::get_item
     drop drop drop
-
     exec.sys::truncate_stack
 end
 
@@ -182,7 +178,6 @@ end
 pub proc is_token_0(asset_id_prefix: felt, asset_id_suffix: felt) -> i1
     exec.get_pool_asset_ids movup.2 drop movup.2 drop
     # => [asset_0_id_prefix, asset_0_id_suffix, asset_id_prefix, asset_id_suffix]
-
     exec.account_id::is_equal
     # => 
     exec.sys::truncate_stack
@@ -380,8 +375,6 @@ proc burn#(amount: felt, own_prefix: felt, own_suffix: felt)
     drop
 end 
 
-
-
 #! add new deposit: receive asset, update deposit mapping
 #!
 #! Inputs: [ASSET0, ASSET1, user_id_prefix, user_id_suffix]
@@ -409,6 +402,9 @@ pub proc deposit
         ### burn minimum liquidity
         push.0.0 push.MINIMUM_LIQUIDITY
         exec.mint
+
+        # send register pool note to the registry
+        # REGISTRY_SLOT 
     end
     ### mint to user
     
@@ -428,7 +424,6 @@ pub proc deposit
     # => [amount_0, amount_1]
     exec.add_to_reserves
 end
-
 
 #! add new deposit: receive asset, update deposit mapping
 #!  amount0 = liquidity.mul(balance0) / _totalSupply; // using balances ensures pro-rata distribution
@@ -581,7 +576,6 @@ pub proc order_assets(asset_0_id_prefix: felt, asset_0_id_suffix: felt, asset_1_
             end
         end
     end
-    
     exec.sys::truncate_stack
 end
 

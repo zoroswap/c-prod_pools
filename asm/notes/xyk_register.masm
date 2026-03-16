@@ -1,0 +1,27 @@
+use zoro::registry
+use miden::core::sys
+
+const INPUTS_START = 0
+const ASSET0_PREFIX = 0
+const ASSET0_SUFFIX = 1
+const ASSET1_PREFIX = 2
+const ASSET1_SUFFIX = 3
+const XYK_POOL_PREFIX = 4
+const XYK_POOL_SUFFIX = 5
+
+begin
+	push.INPUTS_START
+    exec.active_note::get_inputs
+
+    # => [num_inputs, dest_ptr]
+    drop drop
+
+	mem_load.ASSET1_SUFFIX mem_load.ASSET1_PREFIX
+	mem_load.ASSET0_SUFFIX mem_load.ASSET0_PREFIX
+    mem_load.XYK_POOL_SUFFIX mem_load.XYK_POOL_PREFIX
+	
+    # => [xyk_pool_prefix, xyk_pool_suffix, asset0_prefix, asset0_suffix, asset1_prefix, asset1_suffix]
+	call.registry::register_pool
+
+	exec.sys::truncate_stack
+end
