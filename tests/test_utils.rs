@@ -549,7 +549,7 @@ pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
     )
     .await?;
 
-    lp_local_deposit(&mut setup, 1000000000, 1000000000, user.id()).await?;
+    //lp_local_deposit(&mut setup, 1000000000, 1000000000, user.id()).await?;
     touch_account(&mut clients.client, &pool).await.unwrap();
 
     let pool_code_hash = pool.code().commitment();
