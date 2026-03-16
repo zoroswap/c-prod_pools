@@ -292,10 +292,10 @@ pub async fn deploy_combined_pool(
     assets_mapping.insert(
         Word::default(),
         [
-            token0_id.suffix(),
-            token0_id.prefix().as_felt(),
             token1_id.suffix(),
             token1_id.prefix().as_felt(),
+            token0_id.suffix(),
+            token0_id.prefix().as_felt(),
         ]
         .into(),
     )?;
