@@ -98,13 +98,16 @@ pub fn compile_lp_local_fuzz_tx_script(source: &str) -> Result<TransactionScript
 pub fn get_registry_library() -> Result<Library> {
     let math_library = get_math_library()?;
     let storage_utils_library = get_storage_utils_library()?;
+    let xyk_pool_library = get_pool_library()?;
     let source = read_masm_to_string("accounts", "registry")?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
         .with_static_library(math_library)
         .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
         .with_static_library(storage_utils_library)
-        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?;
+        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?
+        .with_static_library(xyk_pool_library)
+        .map_err(|e| anyhow!("Failed to add xyk_pool library to assembler: {e:?}"))?;
     create_library(assembler, "zoro::registry", &source)
         .map_err(|e| anyhow!("Failed to compile registry library: {e:?}"))
 }

@@ -6,8 +6,9 @@ use miden_client::{
     account::{AccountId, StorageSlotName},
     asset::FungibleAsset,
     note::{NoteAttachment, NoteTag, NoteType, build_p2id_recipient, create_p2id_note},
+    rpc::domain::account::AccountStorageRequirements,
     store::{AccountRecord, AccountRecordData},
-    transaction::{AdviceInputs, OutputNote, TransactionRequestBuilder},
+    transaction::{AdviceInputs, ForeignAccount, OutputNote, TransactionRequestBuilder},
 };
 use miden_protocol::crypto::rand::Randomizable;
 use xyk_pool::pool_ops::{
@@ -2447,5 +2448,90 @@ async fn order_assets_same_asset_fails_test() -> Result<()> {
     );
 
     tokio::time::sleep(Duration::from_secs(1)).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn register_pool_happy_path_test() -> Result<()> {
+    let mut setup = setup_registry_test_environment().await?;
+
+    let registry_library = get_registry_library()?;
+    let pool_id = setup.pool.id();
+    let token0_id = setup.faucets[0].faucet.id();
+    let token1_id = setup.faucets[1].faucet.id();
+
+    println!(
+        "register_pool: pool={}, token0={}, token1={}, registry={}",
+        pool_id.to_hex(),
+        token0_id.to_hex(),
+        token1_id.to_hex(),
+        setup.registry.id().to_hex(),
+    );
+
+    let source = format!(
+        "use zoro::registry\n\
+         use miden::core::sys\n\
+         begin\n\
+             push.{a1_sfx}.{a1_pfx}.{a0_sfx}.{a0_pfx}.{pool_sfx}.{pool_pfx}\n\
+             call.registry::register_pool\n\
+             exec.sys::truncate_stack\n\
+         end",
+        pool_pfx = pool_id.prefix().as_u64(),
+        pool_sfx = pool_id.suffix().as_int(),
+        a0_pfx = token0_id.prefix().as_u64(),
+        a0_sfx = token0_id.suffix().as_int(),
+        a1_pfx = token1_id.prefix().as_u64(),
+        a1_sfx = token1_id.suffix().as_int(),
+    );
+
+    let script = compile_custom_tx_script(&registry_library, &source)?;
+
+    let foreign = ForeignAccount::public(pool_id, AccountStorageRequirements::default())?;
+
+    let tx_request = TransactionRequestBuilder::new()
+        .custom_script(script)
+        .foreign_accounts(vec![foreign])
+        .build()?;
+
+    println!("Submitting register_pool TX against registry...");
+    setup
+        .clients
+        .client
+        .submit_new_transaction(setup.registry.id(), tx_request)
+        .await?;
+
+    setup.clients.client.sync_state().await?;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let acc = setup
+        .clients
+        .client
+        .get_account(setup.registry.id())
+        .await?
+        .unwrap();
+    let acc = match acc.account_data() {
+        AccountRecordData::Full(a) => a,
+        AccountRecordData::Partial(_) => {
+            return Err(anyhow::anyhow!("Registry account data is partial"));
+        }
+    };
+
+    let pool_key = Word::new([
+        pool_id.suffix(),
+        pool_id.prefix().into(),
+        Felt::new(0),
+        Felt::new(0),
+    ]);
+    let stored_code_hash = acc
+        .storage()
+        .get_map_item(&slot_name("zoro::registry::pools_mapping"), pool_key)?;
+
+    let expected = setup.pool.code().commitment();
+    assert_eq!(
+        stored_code_hash, expected,
+        "pools_mapping should map pool_id → pool code commitment"
+    );
+
+    println!("register_pool_happy_path_test passed!");
     Ok(())
 }

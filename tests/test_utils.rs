@@ -12,9 +12,9 @@ use miden_client::{
 use std::{env, fs, path::PathBuf};
 use xyk_pool::common::{
     CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
-    deploy_combined_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool,
+    deploy_combined_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool, deploy_registry,
     deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, deploy_xyk_pool, fund_wallet,
-    instantiate_simple_client, load_test_state, save_test_state, try_import_account,
+    instantiate_simple_client, load_test_state, save_test_state, touch_account, try_import_account,
 };
 use xyk_pool::pool_ops::{build_lp_local_deposit_note, get_lp_local_library};
 use xyk_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
@@ -517,4 +517,52 @@ pub async fn setup_combined_pool_test_environment() -> Result<TestSetup> {
     }
 
     Ok(setup)
+}
+
+pub struct RegistryTestSetup {
+    pub clients: MidenClients,
+    pub registry: Account,
+    pub pool: Account,
+    pub faucets: Vec<Faucet>,
+    pub user: Account,
+}
+
+/// Registry + combined pool E2E setup.
+/// Deploys faucets, user, a combined pool, then a registry pre-seeded with the pool's code hash.
+pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
+    dotenv::dotenv().ok();
+    let (label, endpoint) = resolve_endpoint();
+    let base_dir = PathBuf::from("tmp").join(&label);
+    fs::create_dir_all(&base_dir)?;
+
+    let (mut clients, keystore) = init_clients(&base_dir, &endpoint).await?;
+    let (faucets, user, _) = resolve_faucets_and_user(&mut clients, &keystore, &base_dir).await?;
+
+    let token0_id = faucets[0].faucet.id();
+    let token1_id = faucets[1].faucet.id();
+
+    let (pool, _) = deploy_combined_pool(
+        &mut clients.client,
+        keystore.clone(),
+        &token0_id,
+        &token1_id,
+    )
+    .await?;
+
+    lp_local_deposit(&mut setup, 1000000000, 1000000000, user.id()).await?;
+    touch_account(&mut clients.client, &pool).await.unwrap();
+
+    let pool_code_hash = pool.code().commitment();
+    println!("Pool code commitment: {:?}", pool_code_hash);
+
+    let (registry, _) =
+        deploy_registry(&mut clients.client, keystore.clone(), pool_code_hash).await?;
+
+    Ok(RegistryTestSetup {
+        clients,
+        registry,
+        pool,
+        faucets,
+        user,
+    })
 }

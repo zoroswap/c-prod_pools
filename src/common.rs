@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::pool_ops::{
     get_combined_pool_library, get_lp_local_fuzz_dummy_library, get_lp_local_library,
-    get_math_library, get_pool_library, get_storage_utils_library,
+    get_math_library, get_pool_library, get_registry_library, get_storage_utils_library,
 };
 use crate::utils::{
     create_library, extract_full_account, fetch_vault_for_account_from_chain, read_masm_to_string,
@@ -110,10 +110,7 @@ pub async fn create_basic_account(
     client.sync_state().await?;
 
     // dummy tx to get the new account into node
-    let transaction_request = TransactionRequestBuilder::new().build()?;
-    let _tx_id = client
-        .submit_new_transaction(account.id(), transaction_request)
-        .await?;
+    touch_account(client, &account).await.unwrap();
 
     Ok((account, key_pair))
 }
@@ -301,10 +298,10 @@ pub async fn deploy_combined_pool(
     assets_mapping.insert(
         Word::default(),
         [
-            token1_id.suffix(),
-            token1_id.prefix().as_felt(),
             token0_id.suffix(),
             token0_id.prefix().as_felt(),
+            token1_id.suffix(),
+            token1_id.prefix().as_felt(),
         ]
         .into(),
     )?;
@@ -519,6 +516,73 @@ pub async fn deploy_storage_fuzz_dummy(
     Ok((dummy_contract, key_pair))
 }
 
+/// Deploys a registry account pre-seeded with an accepted pool code hash.
+///
+/// Storage slots (must match constants in registry.masm):
+///   - `accepted_code_hashes_mapping`: map with pool_code_hash → [1, 0, 0, 0]
+///   - `pools_mapping`: empty map
+///   - `assets_to_pool_mapping`: empty map
+pub async fn deploy_registry(
+    client: &mut MidenClient,
+    keystore: FilesystemKeyStore,
+    accepted_pool_code_hash: Word,
+) -> Result<(Account, AuthSecretKey), ClientError> {
+    let registry_library = get_registry_library()
+        .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
+
+    let mut accepted_hashes_map = StorageMap::new();
+    accepted_hashes_map.insert(
+        accepted_pool_code_hash,
+        Word::new([Felt::new(1), Felt::new(0), Felt::new(0), Felt::new(0)]),
+    )?;
+    let accepted_hashes_slot = StorageSlot::with_map(
+        slot_name("zoro::registry::accepted_code_hashes_mapping"),
+        accepted_hashes_map,
+    );
+    let pools_mapping_slot =
+        StorageSlot::with_empty_map(slot_name("zoro::registry::pools_mapping"));
+    let assets_to_pool_mapping_slot =
+        StorageSlot::with_empty_map(slot_name("zoro::registry::assets_to_pool_mapping"));
+
+    let registry_component = AccountComponent::new(
+        registry_library,
+        vec![
+            accepted_hashes_slot,
+            pools_mapping_slot,
+            assets_to_pool_mapping_slot,
+        ],
+    )
+    .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
+    .with_supports_all_types();
+
+    let mut init_seed = [0_u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+    let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
+
+    let registry = AccountBuilder::new(init_seed)
+        .account_type(AccountType::RegularAccountUpdatableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(registry_component)
+        .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
+        .with_component(BasicWallet)
+        .build()
+        .map_err(|e| anyhow!("Failed to build registry contract: {e:?}"))
+        .unwrap();
+
+    println!(
+        "Registry deployed => ID: {:?}, accepted code hash: {:?}",
+        registry.id().to_hex(),
+        accepted_pool_code_hash,
+    );
+
+    keystore.add_key(&key_pair).unwrap();
+    client.add_account(&registry, false).await?;
+    client.sync_state().await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    Ok((registry, key_pair))
+}
+
 #[derive(Deserialize, Debug)]
 pub struct FaucetConfig {
     pub symbol: String,
@@ -635,10 +699,7 @@ pub async fn deploy_simple_faucet(
 
     client.sync_state().await?;
     // dummy tx to get the new account into node
-    let transaction_request = TransactionRequestBuilder::new().build()?;
-    let _tx_id = client
-        .submit_new_transaction(faucet_account.id(), transaction_request)
-        .await?;
+    touch_account(client, &faucet_account).await.unwrap();
 
     Ok(faucet_account)
 }
@@ -762,5 +823,14 @@ pub async fn wait_for_note(client: &mut MidenClient, expected: &Note) -> Result<
         debug!("Note {} not found. Waiting...", expected.id().to_hex());
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
+    Ok(())
+}
+
+pub async fn touch_account(client: &mut MidenClient, account: &Account) -> Result<()> {
+    let transaction_request = TransactionRequestBuilder::new().build()?;
+    let _tx_id = client
+        .submit_new_transaction(account.id(), transaction_request)
+        .await?;
+    client.sync_state().await?;
     Ok(())
 }

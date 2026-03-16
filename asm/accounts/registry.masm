@@ -41,7 +41,6 @@ const ASSET_1_ID_SUFFIX = 27
 
 @locals(4)
 pub proc register_pool(
-    # loc.0-3: pool_code_hash
     pool_id_prefix: felt, pool_id_suffix: felt, 
     asset_0_id_prefix: felt, asset_0_id_suffix: felt, 
     asset_1_id_prefix: felt, asset_1_id_suffix: felt
