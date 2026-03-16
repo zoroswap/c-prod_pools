@@ -3,6 +3,7 @@ use miden::protocol::account_id
 
 use zoro::registry
 use miden::core::sys
+use miden::protocol::active_note
 
 
 const ERR_REGISTER_TARGET_ACCT_MISMATCH = "Register target account mismatch"

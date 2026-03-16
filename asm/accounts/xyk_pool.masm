@@ -7,7 +7,6 @@ use miden::core::sys
 use miden::core::math::u64
 
 use miden::protocol::note
-use miden::protocol::active_account
 use miden::protocol::account_id
 
 
