@@ -22,6 +22,8 @@ const OUTPUT_NOTE_INPUT_2 = SCRATCH_SPACE + 2
 const OUTPUT_NOTE_INPUT_3 = SCRATCH_SPACE + 3
 const OUTPUT_NOTE_INPUT_4 = SCRATCH_SPACE + 4
 const OUTPUT_NOTE_INPUT_5 = SCRATCH_SPACE + 5
+const OUTPUT_NOTE_INPUT_6 = SCRATCH_SPACE + 6
+const OUTPUT_NOTE_INPUT_7 = SCRATCH_SPACE + 7
 
 
 const DYNAMIC_PROC_ADDR = 16
@@ -158,6 +160,12 @@ end
 
 pub proc get_pool_asset_ids() -> word
     padw push.ASSETS_MAPPING_SLOT[0..2] exec.active_account::get_map_item
+    exec.sys::truncate_stack
+end
+
+pub proc get_registry_id() -> (felt, felt)
+    push.REGISTRY_ID_SLOT[0..2] exec.active_account::get_item
+    drop drop
     exec.sys::truncate_stack
 end
 
@@ -577,6 +585,11 @@ proc create_register_pool_note()
     mem_store.OUTPUT_NOTE_INPUT_0 mem_store.OUTPUT_NOTE_INPUT_1 mem_store.OUTPUT_NOTE_INPUT_2 
     mem_store.OUTPUT_NOTE_INPUT_3 mem_store.OUTPUT_NOTE_INPUT_4 mem_store.OUTPUT_NOTE_INPUT_5
     # => []
+    exec.get_registry_id
+    # => [registry_id_prefix, registry_id_suffix]
+    mem_store.OUTPUT_NOTE_INPUT_6 mem_store.OUTPUT_NOTE_INPUT_7
+    # => []
+
 
     ### load root hash and serial
     push.REGISTER_NOTE_ROOT_SLOT[0..2]
@@ -586,7 +599,7 @@ proc create_register_pool_note()
     exec.compute_return_note_serial_num
     ## => [REGISTER_SERIAL_NUM, REGISTER_NOTE_ROOT ]
     ### push nr of inputs
-    push.6
+    push.8
     push.OUTPUT_NOTE_INPUTS_START
     ## => [inputs_ptr, number_of_inputs, REGISTER_SERIAL_NUM, REGISTER_NOTE_ROOT]
     exec.note::build_recipient

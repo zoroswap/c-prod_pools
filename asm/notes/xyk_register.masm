@@ -7,6 +7,10 @@ use miden::protocol::active_note
 
 
 const ERR_REGISTER_TARGET_ACCT_MISMATCH = "Register target account mismatch"
+const ERR_INVALID_NUM_INPUTS = "Invalid number of inputs"
+
+
+const EXPECTED_NUM_INPUTS = 8
 
 const INPUTS_START = 0
 const ASSET0_PREFIX = 0
@@ -22,8 +26,10 @@ begin
 	push.INPUTS_START
     exec.active_note::get_inputs
 
+    push.EXPECTED_NUM_INPUTS eq assert.err=ERR_INVALID_NUM_INPUTS
     # => [num_inputs, dest_ptr]
     drop drop
+    exec.validate_consumer
 
 	mem_load.ASSET1_SUFFIX mem_load.ASSET1_PREFIX
 	mem_load.ASSET0_SUFFIX mem_load.ASSET0_PREFIX
@@ -43,7 +49,7 @@ proc validate_consumer()
     # => [consumer_prefix, consumer_suffix]
     mem_load.REGISTRY_SUFFIX mem_load.REGISTRY_PREFIX
     # => [registry_prefix, registry_suffix, consumer_prefix, consumer_suffix]
-   exec.account_id::is_equal assert.err=ERR_P2ID_TARGET_ACCT_MISMATCH
+   exec.account_id::is_equal assert.err=ERR_REGISTER_TARGET_ACCT_MISMATCH
 end
 
 
