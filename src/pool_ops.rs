@@ -14,6 +14,7 @@ use miden_protocol::{
     note::{NoteInputs, NoteScript},
     transaction::{TransactionKernel, TransactionScript},
 };
+use miden_standards::StandardsLib;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use std::{fs, path::PathBuf};
 
@@ -52,6 +53,8 @@ pub fn get_lp_local_library() -> Result<Library> {
     let source = read_masm_to_string("accounts", "lp_local")?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
+        .with_static_library(StandardsLib::default())
+        .map_err(|e| anyhow!("Failed to add standards library to assembler: {e:?}"))?
         .with_static_library(math_library)
         .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
         .with_static_library(storage_utils_library)

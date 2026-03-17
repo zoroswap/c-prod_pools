@@ -6,9 +6,14 @@ use miden::protocol::active_account
 use miden::protocol::output_note
 use miden::core::sys
 use miden::protocol::account_id
+use miden::standards::attachments::network_account_target
+
 
 use zoro::math
 use zoro::storage_utils
+
+pub const DEFAULT_TAG = 0
+pub const DEFAULT_EXEC_HINT = 0
 
 const MINIMUM_LIQUIDITY = 100
 
@@ -575,8 +580,10 @@ proc compute_return_note_serial_num() -> word
     # => [SERIAL_NUM]
 end
 
-
+@locals(1)
 proc create_register_pool_note()
+    #loc.0: note_id
+
     ### store note inputs in memory
     exec.get_pool_asset_ids
     # =>[asset_0_id_prefix, asset_0_id_suffix, asset_1_id_prefix, asset_1_id_suffix]
@@ -604,9 +611,18 @@ proc create_register_pool_note()
     ## => [inputs_ptr, number_of_inputs, REGISTER_SERIAL_NUM, REGISTER_NOTE_ROOT]
     exec.note::build_recipient
     # => [RECIPIENT]
-    push.1.0
+    push.1 push.DEFAULT_TAG
     # => [note_tag, note_type, RECIPIENT]
-    exec.output_note::create
-    # => [note_id]
-    drop
+    exec.output_note::create loc_store.0
+    # => []
+    ### add network tx attachment
+    push.DEFAULT_EXEC_HINT
+    exec.get_registry_id
+    ## => [target_id_prefix, target_id_suffix, exec_hint]
+    exec.network_account_target::new
+    ## => [attachment_scheme, attachment_kind, NOTE_ATTACHMENT]
+    loc_load.0
+    ## => [note_id, attachment_scheme, attachment_kind, NOTE_ATTACHMENT]
+    exec.output_note::set_attachment
+    # => []
 end

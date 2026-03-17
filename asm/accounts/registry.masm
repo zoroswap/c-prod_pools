@@ -84,7 +84,6 @@ pub proc register_pool(
     ### update assets to pool mapping
     mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX exec.pool_id_to_key
     # => [POOL_ID_KEY]
-    debug.stack.8
     padw mem_loadw_le.POOL_ASSETS_WORD 
     # => [POOL_ASSETS_WORD, POOL_ID_KEY]
     exec.set_assets_to_pool_mapping

@@ -307,10 +307,10 @@ pub async fn deploy_combined_pool(
     let registry_id_slot = StorageSlot::with_value(
         slot_name("zoro::lp_local::registry_id"),
         Word::new([
+            registry_id.suffix().into(),
+            registry_id.prefix().into(),
             Felt::ZERO,
             Felt::ZERO,
-            registry_id.prefix().into(),
-            registry_id.prefix().into(),
         ]),
     );
     let register_note_root = StorageSlot::with_value(
