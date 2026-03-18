@@ -561,33 +561,15 @@ pub async fn deploy_registry(
         accepted_hashes_map,
     );
 
-    let mut bogus_map = StorageMap::new();
-    bogus_map.insert(
-        Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(0)]),
-        Word::new([Felt::new(1), Felt::new(0), Felt::new(0), Felt::new(0)]),
-    )?;
-
     let pools_mapping_slot =
-        StorageSlot::with_map(slot_name("zoro::registry::pools_mapping"), bogus_map);
+        StorageSlot::with_empty_map(slot_name("zoro::registry::pools_mapping"));
 
-    let mut bogus_map = StorageMap::new();
-    bogus_map.insert(
-        Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(0)]),
-        Word::new([Felt::new(1), Felt::new(0), Felt::new(0), Felt::new(0)]),
-    )?;
-
-    let assets_to_pool_mapping_slot = StorageSlot::with_map(
-        slot_name("zoro::registry::assets_to_pool_mapping"),
-        bogus_map,
-    );
+    let assets_to_pool_mapping_slot =
+        StorageSlot::with_empty_map(slot_name("zoro::registry::assets_to_pool_mapping"));
 
     let registry_component = AccountComponent::new(
         registry_library,
         vec![
-            StorageSlot::with_value(
-                slot_name("bullshit::slot"),
-                Word::new([Felt::new(1), Felt::new(0), Felt::new(0), Felt::new(0)]),
-            ),
             pools_mapping_slot,
             assets_to_pool_mapping_slot,
             accepted_hashes_slot,
