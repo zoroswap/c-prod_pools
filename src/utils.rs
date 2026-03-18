@@ -34,7 +34,7 @@ pub fn create_library(
     library_path: &str,
     source_code: &str,
 ) -> Result<miden_client::assembly::Library, Box<dyn std::error::Error>> {
-    println!("creating library: {:?}", library_path);
+    // println!("creating library: {:?}", library_path);
     let source_manager = Arc::new(DefaultSourceManager::default());
     // println!("parsing library: {:?}", library_path);
     let module = Module::parser(ModuleKind::Library).parse_str(
@@ -133,7 +133,7 @@ pub fn get_pool_account_code_commitment() -> Word {
     let init_seed = [0_u8; 32];
     let contract = AccountBuilder::new(init_seed)
         .account_type(AccountType::RegularAccountImmutableCode)
-        .storage_mode(AccountStorageMode::Network)
+        .storage_mode(AccountStorageMode::Public)
         .with_component(lp_local_component)
         .with_component(xyk_pool_component)
         .with_auth_component(NoAuth)

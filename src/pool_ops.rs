@@ -373,6 +373,46 @@ pub fn build_dummy_register_note(registry_id: &AccountId, serial_num: Word) -> N
     Note::new(assets, metadata, recipient)
 }
 
+/// Builds a xyk_register note targeting the registry
+pub fn build_xyk_register_note(
+    registry_id: &AccountId,
+    serial_num: Word,
+    token0: &AccountId,
+    token1: &AccountId,
+    xyk_pool: &AccountId,
+    sender: &AccountId,
+) -> Result<Note> {
+    let script = compile_xyk_register_note_script()?;
+
+    let inputs = NoteInputs::new(vec![
+        token0.prefix().into(),
+        token0.suffix(),
+        token1.prefix().into(),
+        token1.suffix(),
+        xyk_pool.prefix().into(),
+        xyk_pool.suffix(),
+        registry_id.prefix().into(),
+        registry_id.suffix(),
+    ])?;
+
+    let assets = NoteAssets::new(vec![])?;
+    // let tag = NoteTag::with_account_target(*registry_id);
+    let tag = NoteTag::new(0);
+    let metadata = NoteMetadata::new(*sender, NoteType::Public, tag);
+    let recipient = NoteRecipient::new(serial_num, script.clone(), inputs.clone());
+    println!(
+        "REGISTER NOTE recipient: {:?}, serial: {:?}, script {:?}, inputs {:?}, tag: {:?}, registry_prefix: {:?}",
+        recipient.digest(),
+        serial_num,
+        script.root(),
+        inputs,
+        tag,
+        registry_id.prefix().as_u64()
+    );
+
+    Ok(Note::new(assets, metadata, recipient))
+}
+
 /// Builds a swap note targeting the combined pool (lp_local + xyk_pool).
 ///
 /// Note inputs layout (12 felts):

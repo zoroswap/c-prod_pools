@@ -540,6 +540,40 @@ pub struct RegistryTestSetup {
     pub user: Account,
 }
 
+impl RegistryTestSetup {
+    pub async fn maybe_fund_user_wallet(&mut self, amount: u64) -> Result<()> {
+        self.clients.client.sync_state().await?;
+        let vault =
+            fetch_vault_for_account_from_chain(&self.clients.rpc_api, &self.user.id()).await?;
+
+        for asset in self.faucets.iter() {
+            let faucet_id = asset.faucet.id();
+            let current = vault.get_balance(faucet_id).unwrap_or(0);
+            if current >= amount {
+                println!(
+                    "{}: balance {} >= {}, skipping funding",
+                    asset.config.symbol, current, amount
+                );
+                continue;
+            }
+            let needed = amount - current;
+            println!(
+                "{}: balance {} < {}, funding {} more",
+                asset.config.symbol, current, amount, needed
+            );
+            fund_wallet(
+                &mut self.clients,
+                &self.user,
+                &asset.config,
+                &faucet_id,
+                needed,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+}
+
 /// Registry + combined pool E2E setup.
 /// Deploys faucets, user, a combined pool, then a registry pre-seeded with the pool's code hash.
 pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
@@ -561,6 +595,8 @@ pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
     )
     .await?;
 
+    println!("====== REGISTRY DEPLOYED");
+
     let (pool, _) = deploy_combined_pool(
         &mut clients.client,
         keystore.clone(),
@@ -570,8 +606,7 @@ pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
     )
     .await?;
 
-    touch_account(&mut clients.client, &pool).await.unwrap();
-    sleep(Duration::from_secs(5)).await;
+    println!("====== XYK POOL DEPLOYED");
 
     let pool_code_hash = pool.code().commitment();
     println!(
@@ -580,8 +615,12 @@ pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
     );
     println!("Pool code commitment: {:?}", pool_code_hash);
 
-    // let (registry, _) =
-    //     deploy_registry(&mut clients.client, keystore.clone(), pool_code_hash).await?;
+    let pool_tag = NoteTag::with_account_target(pool.id());
+    let registry_tag = NoteTag::with_account_target(registry.id());
+    clients.client.add_note_tag(pool_tag).await?;
+    clients.client.add_note_tag(registry_tag).await?;
+
+    // sleep(Duration::from_secs(5)).await;
 
     Ok(RegistryTestSetup {
         clients,

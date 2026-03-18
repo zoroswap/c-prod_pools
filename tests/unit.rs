@@ -12,16 +12,20 @@ use miden_client::{
     store::AccountRecordData,
     transaction::{AdviceInputs, ForeignAccount, OutputNote, TransactionRequestBuilder},
 };
-use xyk_pool::pool_ops::{
-    build_lp_local_deposit_note, build_xyk_swap_exact_tokens_for_tokens_note,
-    build_xyk_swap_tokens_for_exact_tokens_note, compile_custom_tx_script,
-    compile_lp_local_fuzz_tx_script, compile_storage_fuzz_tx_script, compute_expected_lp,
-    compute_expected_withdraw, get_combined_pool_library, get_lp_local_library, get_math_library,
-    get_pool_library, get_registry_library, isqrt,
-};
 use xyk_pool::utils::{fetch_vault_for_account_from_chain, order_assets_as_felts, slot_name};
+use xyk_pool::{
+    common::get_return_note_serial,
+    pool_ops::{
+        build_lp_local_deposit_note, build_xyk_register_note,
+        build_xyk_swap_exact_tokens_for_tokens_note, build_xyk_swap_tokens_for_exact_tokens_note,
+        compile_custom_tx_script, compile_lp_local_fuzz_tx_script, compile_storage_fuzz_tx_script,
+        compile_xyk_register_note_script, compute_expected_lp, compute_expected_withdraw,
+        get_combined_pool_library, get_lp_local_library, get_math_library, get_pool_library,
+        get_registry_library, isqrt,
+    },
+};
 
-use std::{collections::BTreeSet, time::Duration};
+use std::{collections::BTreeSet, thread::sleep, time::Duration};
 use test_utils::*;
 
 #[tokio::test]
@@ -2477,7 +2481,6 @@ async fn order_assets_same_asset_fails_test() -> Result<()> {
 async fn register_pool_happy_path_test() -> Result<()> {
     let mut setup = setup_registry_test_environment().await?;
 
-    let registry_library = get_registry_library()?;
     let pool_id = setup.pool.id();
     let token0_id = setup.faucets[0].faucet.id();
     let token1_id = setup.faucets[1].faucet.id();
@@ -2490,38 +2493,45 @@ async fn register_pool_happy_path_test() -> Result<()> {
         setup.registry.id().to_hex(),
     );
 
-    let source = format!(
-        "use zoro::registry\n\
-         use miden::core::sys\n\
-         begin\n\
-             push.{a1_sfx}.{a1_pfx}.{a0_sfx}.{a0_pfx}.{pool_sfx}.{pool_pfx}\n\
-             call.registry::register_pool\n\
-             exec.sys::truncate_stack\n\
-         end",
-        pool_pfx = pool_id.prefix().as_u64(),
-        pool_sfx = pool_id.suffix().as_int(),
-        a0_pfx = token0_id.prefix().as_u64(),
-        a0_sfx = token0_id.suffix().as_int(),
-        a1_pfx = token1_id.prefix().as_u64(),
-        a1_sfx = token1_id.suffix().as_int(),
-    );
+    let register_note = build_xyk_register_note(
+        &setup.registry.id(),
+        setup.clients.client.rng().draw_word(),
+        &token0_id,
+        &token1_id,
+        &setup.pool.id(),
+        &setup.user.id(),
+    )?;
 
-    let script = compile_custom_tx_script(&registry_library, &source)?;
+    println!("====== SENDING THE REGISTER NOTE");
 
-    let foreign = ForeignAccount::public(pool_id, AccountStorageRequirements::default())?;
-
-    let tx_request = TransactionRequestBuilder::new()
-        .custom_script(script)
-        .foreign_accounts(vec![foreign])
+    let consume_req = TransactionRequestBuilder::new()
+        .own_output_notes([OutputNote::Full(register_note.clone())])
         .build()?;
 
-    println!("Submitting register_pool TX against registry...");
+    println!("Built request for sending register note");
+
     setup
         .clients
         .client
-        .submit_new_transaction(setup.registry.id(), tx_request)
+        .submit_new_transaction(setup.user.id(), consume_req)
         .await?;
 
+    setup.clients.client.sync_state().await?;
+
+    println!("====== CONSUMING THE REGISTER NOTE");
+
+    let foreign = ForeignAccount::public(pool_id, AccountStorageRequirements::default())?;
+    let consume_req = TransactionRequestBuilder::new()
+        .input_notes([(register_note.clone(), None)])
+        .foreign_accounts([foreign])
+        .build()?;
+
+    println!("Submitting register_pool note against registry...");
+    setup
+        .clients
+        .client
+        .submit_new_transaction(setup.registry.id(), consume_req)
+        .await?;
     setup.clients.client.sync_state().await?;
 
     let acc = setup
@@ -2530,6 +2540,7 @@ async fn register_pool_happy_path_test() -> Result<()> {
         .get_account(setup.registry.id())
         .await?
         .unwrap();
+
     let acc = match acc.account_data() {
         AccountRecordData::Full(a) => a,
         AccountRecordData::Partial(_) => {
@@ -2553,40 +2564,138 @@ async fn register_pool_happy_path_test() -> Result<()> {
         "pools_mapping should map pool_id → pool code commitment"
     );
 
-    println!("Checking if same pool cant be registered twice");
-    let source = format!(
-        "use zoro::registry\n\
-         use miden::core::sys\n\
-         begin\n\
-             push.{a1_sfx}.{a1_pfx}.{a0_sfx}.{a0_pfx}.{pool_sfx}.{pool_pfx}\n\
-             call.registry::register_pool\n\
-             exec.sys::truncate_stack\n\
-         end",
-        pool_pfx = pool_id.prefix().as_u64(),
-        pool_sfx = pool_id.suffix().as_int(),
-        a0_pfx = token0_id.prefix().as_u64(),
-        a0_sfx = token0_id.suffix().as_int(),
-        a1_pfx = token1_id.prefix().as_u64(),
-        a1_sfx = token1_id.suffix().as_int(),
-    );
+    let register_note = build_xyk_register_note(
+        &setup.registry.id(),
+        setup.clients.client.rng().draw_word(),
+        &token0_id,
+        &token1_id,
+        &setup.pool.id(),
+        &setup.user.id(),
+    )?;
 
-    let script = compile_custom_tx_script(&registry_library, &source)?;
-    let foreign = ForeignAccount::public(pool_id, AccountStorageRequirements::default())?;
-    let tx_request = TransactionRequestBuilder::new()
-        .custom_script(script)
-        .foreign_accounts(vec![foreign])
+    println!("====== SENDING THE REGISTER NOTE AGAIN (should not succeed)");
+
+    let consume_req = TransactionRequestBuilder::new()
+        .own_output_notes([OutputNote::Full(register_note.clone())])
         .build()?;
 
-    println!("Submitting register_pool TX against registry again ...");
+    println!("Built request for sending register note");
+
     setup
         .clients
         .client
-        .submit_new_transaction(setup.registry.id(), tx_request)
+        .submit_new_transaction(setup.user.id(), consume_req)
+        .await?;
+
+    setup.clients.client.sync_state().await?;
+
+    println!("====== CONSUMING THE REGISTER NOTE AGAIN (should fail)");
+
+    let foreign = ForeignAccount::public(pool_id, AccountStorageRequirements::default())?;
+    let consume_req = TransactionRequestBuilder::new()
+        .input_notes([(register_note.clone(), None)])
+        .foreign_accounts([foreign])
+        .build()?;
+
+    println!("Submitting register_pool note against registry...");
+    setup
+        .clients
+        .client
+        .submit_new_transaction(setup.registry.id(), consume_req)
         .await
-        .expect_err("Duplicate pools shouldntb be allowed in registry");
+        .expect_err("Shouldnt be able to register same pool twice");
 
     setup.clients.client.sync_state().await?;
 
     println!("register_pool_happy_path_test passed!");
+    Ok(())
+}
+
+#[tokio::test]
+async fn register_pool_with_deposit_test() -> Result<()> {
+    let mut setup = setup_registry_test_environment().await?;
+
+    let pool_id = setup.pool.id();
+    let token0_id = setup.faucets[0].faucet.id();
+    let token1_id = setup.faucets[1].faucet.id();
+
+    println!(
+        "register_pool: pool={}, token0={}, token1={}, registry={}",
+        pool_id.to_hex(),
+        token0_id.to_hex(),
+        token1_id.to_hex(),
+        setup.registry.id().to_hex(),
+    );
+    setup.maybe_fund_user_wallet(100_000).await?;
+    let amount0 = 1000000u64;
+    let amount1 = 1000000u64;
+    let token0_asset = FungibleAsset::new(token0_id, amount0)?;
+    let token1_asset = FungibleAsset::new(token1_id, amount1)?;
+    let lp_lib = get_lp_local_library()?;
+    let deposit_note = build_lp_local_deposit_note(
+        setup.pool.id(),
+        &lp_lib,
+        token0_asset,
+        token1_asset,
+        setup.user.id(),
+        setup.user.id(),
+    )?;
+
+    println!("=== SEND DEPOSIT NOTE ");
+
+    let create_req = TransactionRequestBuilder::new()
+        .own_output_notes([OutputNote::Full(deposit_note.clone())])
+        .build()?;
+    let _tx_id = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.user.id(), create_req)
+        .await?;
+    setup.clients.client.sync_state().await?;
+
+    println!("=== CONSUME DEPOSIT NOTE ");
+
+    let deposit_serial = deposit_note.serial_num();
+    let register_serial = get_return_note_serial(deposit_serial, pool_id);
+    let register_note = build_xyk_register_note(
+        &setup.registry.id(),
+        register_serial,
+        &token0_id,
+        &token1_id,
+        &setup.pool.id(),
+        &setup.pool.id(),
+    )?;
+    let consume_req = TransactionRequestBuilder::new()
+        .input_notes([(deposit_note.clone(), None)])
+        // .expected_future_notes(vec![(
+        //     register_note.clone().into(),
+        //     register_note.metadata().tag(),
+        // )])
+        // .expected_output_recipients(vec![register_note.recipient().clone()])
+        .build()?;
+    let _consume_id = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.pool.id(), consume_req)
+        .await?;
+
+    setup.clients.client.sync_state().await?;
+
+    println!("=== CONSUME XYK_REGISTER NOTE ");
+
+    let foreign = ForeignAccount::public(setup.pool.id(), AccountStorageRequirements::default())?;
+    let consume_req = TransactionRequestBuilder::new()
+        .input_notes([(register_note.clone(), None)])
+        .foreign_accounts([foreign])
+        .build()?;
+    let _consume_id = setup
+        .clients
+        .client
+        .submit_new_transaction(setup.registry.id(), consume_req)
+        .await?;
+
+    setup.clients.client.sync_state().await?;
+
+    println!("register_pool_with_deposit_test passed!");
     Ok(())
 }

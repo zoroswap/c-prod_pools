@@ -23,6 +23,8 @@ const REGISTRY_PREFIX = 6
 const REGISTRY_SUFFIX = 7
 
 begin
+	push.0 drop
+	
 	push.INPUTS_START
     exec.active_note::get_inputs
 
@@ -36,6 +38,7 @@ begin
     mem_load.XYK_POOL_SUFFIX mem_load.XYK_POOL_PREFIX
 	
     # => [xyk_pool_prefix, xyk_pool_suffix, asset0_prefix, asset0_suffix, asset1_prefix, asset1_suffix]
+
 	call.registry::register_pool
 
 	exec.sys::truncate_stack
@@ -48,7 +51,7 @@ proc validate_consumer()
     # => [consumer_prefix, consumer_suffix]
     mem_load.REGISTRY_SUFFIX mem_load.REGISTRY_PREFIX
     # => [registry_prefix, registry_suffix, consumer_prefix, consumer_suffix]
-   exec.account_id::is_equal assert.err=ERR_REGISTER_TARGET_ACCT_MISMATCH
+   	exec.account_id::is_equal assert.err=ERR_REGISTER_TARGET_ACCT_MISMATCH
 end
 
 

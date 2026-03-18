@@ -24,6 +24,7 @@ use miden_client_sqlite_store::ClientBuilderSqliteExt;
 use miden_protocol::{FieldElement, account::AccountComponent, transaction::TransactionKernel};
 use miden_standards::account::{faucets::BasicFungibleFaucet, wallets::BasicWallet};
 use rand::RngCore;
+use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
 use serde::{Deserialize, Serialize};
@@ -309,7 +310,7 @@ pub async fn deploy_combined_pool(
     let registry_id_slot = StorageSlot::with_value(
         slot_name("zoro::lp_local::registry_id"),
         Word::new([
-            registry_id.suffix().into(),
+            registry_id.suffix(),
             registry_id.prefix().into(),
             Felt::ZERO,
             Felt::ZERO,
@@ -317,10 +318,11 @@ pub async fn deploy_combined_pool(
     );
 
     println!(
-        "REGISTRY SUFFIX {} PREFIX {} TAG {}",
+        "REGISTRY SUFFIX {} PREFIX {} TAG {} NOTE_ROOT_HASH {:?}",
         registry_id.suffix(),
         registry_id.prefix().as_felt(),
-        NoteTag::with_account_target(*registry_id)
+        NoteTag::with_account_target(*registry_id),
+        get_register_note_root_hash()
     );
 
     let register_note_root = StorageSlot::with_value(
@@ -361,7 +363,7 @@ pub async fn deploy_combined_pool(
 
     let contract = AccountBuilder::new(init_seed)
         .account_type(AccountType::RegularAccountImmutableCode)
-        .storage_mode(AccountStorageMode::Network)
+        .storage_mode(AccountStorageMode::Public)
         .with_component(lp_local_component)
         .with_component(xyk_pool_component)
         .with_auth_component(NoAuth)
@@ -375,9 +377,13 @@ pub async fn deploy_combined_pool(
         contract.id().to_hex()
     );
 
-    keystore.add_key(&key_pair).unwrap();
-    client.add_account(&contract.clone(), false).await?;
+    // keystore.add_key(&key_pair).unwrap();
+    client.add_account(&contract.clone(), true).await?;
     client.sync_state().await?;
+
+    touch_account(client, &contract).await.unwrap();
+
+    // sleep(Duration::from_secs(5)).await;
 
     Ok((contract, key_pair))
 }
@@ -584,7 +590,7 @@ pub async fn deploy_registry(
 
     let registry = AccountBuilder::new(init_seed)
         .account_type(AccountType::RegularAccountImmutableCode)
-        .storage_mode(AccountStorageMode::Network)
+        .storage_mode(AccountStorageMode::Public)
         .with_component(registry_component)
         // .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
         .with_auth_component(NoAuth)
@@ -600,15 +606,8 @@ pub async fn deploy_registry(
     );
 
     keystore.add_key(&key_pair).unwrap();
-
-    println!("add key");
-
-    client.add_account(&registry, false).await?;
-
-    println!("add account");
-
+    client.add_account(&registry, true).await?;
     client.sync_state().await?;
-    println!("sync");
 
     let _ = touch_account(client, &registry).await;
     // println!("touch account");
@@ -628,7 +627,7 @@ pub async fn deploy_registry(
 
     // println!("Dummy register note sent");
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     Ok((registry, key_pair))
 }
@@ -877,30 +876,14 @@ pub async fn wait_for_note(client: &mut MidenClient, expected: &Note) -> Result<
 }
 
 pub fn get_return_note_serial(input_note_serial: Word, user_id: AccountId) -> Word {
-    // let user_id_word = Word::new([
-    //     Felt::ZERO,
-    //     Felt::ZERO,
-    //     user_id.prefix().as_felt(),
-    //     user_id.suffix(),
-    // ]);
-    // let mut serial_reversed = input_note_serial.clone();
-    // serial_reversed.reverse();
-
-    // let mut user_id_word_reversed = user_id_word.clone();
-    // user_id_word_reversed.reverse();
-    // // Rpo256::merge(&[user_id_word, serial_reversed])
-    // Rpo256::merge(&[user_id_word_reversed, input_note_serial])
-    [
+    let mut serial = Word::new([
         input_note_serial[3] + Felt::new(1),
         input_note_serial[2],
         input_note_serial[1],
         input_note_serial[0],
-        // input_note_serial[0],
-        // input_note_serial[1],
-        // input_note_serial[2],
-        // input_note_serial[3] + Felt::new(1),
-    ]
-    .into()
+    ]);
+    serial.reverse();
+    serial
 }
 
 pub async fn touch_account(client: &mut MidenClient, account: &Account) -> Result<()> {
