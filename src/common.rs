@@ -2,6 +2,8 @@ use std::sync::Arc;
 use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, anyhow};
+use miden_client::auth::NoAuth;
+use miden_client::note::NoteTag;
 use miden_client::{
     ClientError, Felt, Word,
     account::{
@@ -313,6 +315,14 @@ pub async fn deploy_combined_pool(
             Felt::ZERO,
         ]),
     );
+
+    println!(
+        "REGISTRY SUFFIX {} PREFIX {} TAG {}",
+        registry_id.suffix(),
+        registry_id.prefix().as_felt(),
+        NoteTag::with_account_target(*registry_id)
+    );
+
     let register_note_root = StorageSlot::with_value(
         slot_name("zoro::lp_local::register_note_root"),
         get_register_note_root_hash(),
@@ -568,10 +578,11 @@ pub async fn deploy_registry(
     let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
 
     let registry = AccountBuilder::new(init_seed)
-        .account_type(AccountType::RegularAccountUpdatableCode)
-        .storage_mode(AccountStorageMode::Public)
+        .account_type(AccountType::RegularAccountImmutableCode)
+        .storage_mode(AccountStorageMode::Network)
         .with_component(registry_component)
-        .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
+        // .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
+        .with_auth_component(NoAuth)
         .with_component(BasicWallet)
         .build()
         .map_err(|e| anyhow!("Failed to build registry contract: {e:?}"))

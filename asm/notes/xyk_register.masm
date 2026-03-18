@@ -27,14 +27,13 @@ begin
     exec.active_note::get_inputs
 
     push.EXPECTED_NUM_INPUTS eq assert.err=ERR_INVALID_NUM_INPUTS
-    # => [num_inputs, dest_ptr]
-    drop drop
+    # => [dest_ptr]
+    drop
     exec.validate_consumer
 
 	mem_load.ASSET1_SUFFIX mem_load.ASSET1_PREFIX
 	mem_load.ASSET0_SUFFIX mem_load.ASSET0_PREFIX
     mem_load.XYK_POOL_SUFFIX mem_load.XYK_POOL_PREFIX
-    mem_load.REGISTRY_SUFFIX mem_load.REGISTRY_PREFIX
 	
     # => [xyk_pool_prefix, xyk_pool_suffix, asset0_prefix, asset0_suffix, asset1_prefix, asset1_suffix]
 	call.registry::register_pool

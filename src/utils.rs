@@ -132,8 +132,8 @@ pub fn get_pool_account_code_commitment() -> Word {
 
     let init_seed = [0_u8; 32];
     let contract = AccountBuilder::new(init_seed)
-        .account_type(AccountType::RegularAccountUpdatableCode)
-        .storage_mode(AccountStorageMode::Public)
+        .account_type(AccountType::RegularAccountImmutableCode)
+        .storage_mode(AccountStorageMode::Network)
         .with_component(lp_local_component)
         .with_component(xyk_pool_component)
         .with_auth_component(NoAuth)

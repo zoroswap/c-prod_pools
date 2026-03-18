@@ -53,7 +53,7 @@ pub fn get_lp_local_library() -> Result<Library> {
     let source = read_masm_to_string("accounts", "lp_local")?;
     let assembler = TransactionKernel::assembler()
         .with_warnings_as_errors(true)
-        .with_static_library(StandardsLib::default())
+        .with_dynamic_library(StandardsLib::default())
         .map_err(|e| anyhow!("Failed to add standards library to assembler: {e:?}"))?
         .with_static_library(math_library)
         .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
@@ -357,6 +357,8 @@ pub fn build_dummy_register_note(registry_id: &AccountId, serial_num: Word) -> N
     let metadata = NoteMetadata::new(*registry_id, NoteType::Public, tag);
     let inputs = NoteInputs::new(
         [
+            Felt::ZERO,
+            Felt::ZERO,
             Felt::ZERO,
             Felt::ZERO,
             Felt::ZERO,

@@ -560,6 +560,7 @@ pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
         get_pool_account_code_commitment(),
     )
     .await?;
+
     let (pool, _) = deploy_combined_pool(
         &mut clients.client,
         keystore.clone(),
@@ -573,10 +574,14 @@ pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
     sleep(Duration::from_secs(5)).await;
 
     let pool_code_hash = pool.code().commitment();
+    println!(
+        "Pool code generated commitment: {:?}",
+        get_pool_account_code_commitment()
+    );
     println!("Pool code commitment: {:?}", pool_code_hash);
 
-    let (registry, _) =
-        deploy_registry(&mut clients.client, keystore.clone(), pool_code_hash).await?;
+    // let (registry, _) =
+    //     deploy_registry(&mut clients.client, keystore.clone(), pool_code_hash).await?;
 
     Ok(RegistryTestSetup {
         clients,

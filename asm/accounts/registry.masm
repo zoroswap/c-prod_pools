@@ -46,6 +46,9 @@ pub proc register_pool(
     asset_0_id_prefix: felt, asset_0_id_suffix: felt, 
     asset_1_id_prefix: felt, asset_1_id_suffix: felt
 )
+
+    push.0 drop
+    
     # loc.0-3: pool_code_hash
     mem_store.POOL_ID_PREFIX mem_store.POOL_ID_SUFFIX
     exec.order_assets mem_storew_le.POOL_ASSETS_WORD dropw
