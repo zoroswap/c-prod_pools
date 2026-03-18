@@ -360,11 +360,11 @@ pub async fn deploy_combined_pool(
     let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
 
     let contract = AccountBuilder::new(init_seed)
-        .account_type(AccountType::RegularAccountUpdatableCode)
-        .storage_mode(AccountStorageMode::Public)
+        .account_type(AccountType::RegularAccountImmutableCode)
+        .storage_mode(AccountStorageMode::Network)
         .with_component(lp_local_component)
         .with_component(xyk_pool_component)
-        .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
+        .with_auth_component(NoAuth)
         .with_component(BasicWallet)
         .build()
         .map_err(|e| anyhow!("Failed to build combined pool contract: {e:?}"))
@@ -549,6 +549,9 @@ pub async fn deploy_registry(
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
 
     let mut accepted_hashes_map = StorageMap::new();
+
+    println!("account pool code hash {:?}", accepted_pool_code_hash);
+
     accepted_hashes_map.insert(
         accepted_pool_code_hash,
         Word::new([Felt::new(1), Felt::new(0), Felt::new(0), Felt::new(0)]),
@@ -557,17 +560,37 @@ pub async fn deploy_registry(
         slot_name("zoro::registry::accepted_code_hashes_mapping"),
         accepted_hashes_map,
     );
+
+    let mut bogus_map = StorageMap::new();
+    bogus_map.insert(
+        Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(0)]),
+        Word::new([Felt::new(1), Felt::new(0), Felt::new(0), Felt::new(0)]),
+    )?;
+
     let pools_mapping_slot =
-        StorageSlot::with_empty_map(slot_name("zoro::registry::pools_mapping"));
-    let assets_to_pool_mapping_slot =
-        StorageSlot::with_empty_map(slot_name("zoro::registry::assets_to_pool_mapping"));
+        StorageSlot::with_map(slot_name("zoro::registry::pools_mapping"), bogus_map);
+
+    let mut bogus_map = StorageMap::new();
+    bogus_map.insert(
+        Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(0)]),
+        Word::new([Felt::new(1), Felt::new(0), Felt::new(0), Felt::new(0)]),
+    )?;
+
+    let assets_to_pool_mapping_slot = StorageSlot::with_map(
+        slot_name("zoro::registry::assets_to_pool_mapping"),
+        bogus_map,
+    );
 
     let registry_component = AccountComponent::new(
         registry_library,
         vec![
-            accepted_hashes_slot,
+            StorageSlot::with_value(
+                slot_name("bullshit::slot"),
+                Word::new([Felt::new(1), Felt::new(0), Felt::new(0), Felt::new(0)]),
+            ),
             pools_mapping_slot,
             assets_to_pool_mapping_slot,
+            accepted_hashes_slot,
         ],
     )
     .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
@@ -595,16 +618,33 @@ pub async fn deploy_registry(
     );
 
     keystore.add_key(&key_pair).unwrap();
-    client.add_account(&registry, false).await?;
-    client.sync_state().await?;
 
-    let dummy_register = build_dummy_register_note(&registry.id(), client.rng().draw_word());
-    let init_note_tx = TransactionRequestBuilder::new()
-        .own_output_notes([OutputNote::Full(dummy_register)])
-        .build()?;
-    client
-        .submit_new_transaction(registry.id(), init_note_tx)
-        .await?;
+    println!("add key");
+
+    client.add_account(&registry, false).await?;
+
+    println!("add account");
+
+    client.sync_state().await?;
+    println!("sync");
+
+    let _ = touch_account(client, &registry).await;
+    // println!("touch account");
+
+    // println!("Dummy register note ...");
+
+    // let dummy_register = build_dummy_register_note(&registry.id(), client.rng().draw_word());
+    // let init_note_tx = TransactionRequestBuilder::new()
+    //     .own_output_notes([OutputNote::Full(dummy_register)])
+    //     .build()?;
+
+    // println!("Dummy register note BUILT ");
+
+    // client
+    //     .submit_new_transaction(registry.id(), init_note_tx)
+    //     .await?;
+
+    // println!("Dummy register note sent");
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
