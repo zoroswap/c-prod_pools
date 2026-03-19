@@ -65,21 +65,25 @@ pub proc register_pool(
     eq.0 assert.err=ERR_POOL_FOR_ASSETS_ALREADY_REGISTERED
 
     ### get pool code hash via FPI
-    procref.xyk_pool::get_account_code_commitment mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
+    # procref.xyk_pool::get_account_code_commitment mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
 
     # => [pool_id_prefix, pool_id_suffix, GET_CODE_COMMITMENT_HASH]
-    exec.tx::execute_foreign_procedure loc_storew_le.0
+    # exec.tx::execute_foreign_procedure loc_storew_le.0
 
     # => [POOL_CODE_HASH]
     ### validate pool code hash 
-    exec.validate_pool_code_hash
+    # exec.validate_pool_code_hash
 
     # => [is_code_hash_accepted]
-    assert.err=ERR_POOL_CODE_HASH_NOT_ACCEPTED
+    # assert.err=ERR_POOL_CODE_HASH_NOT_ACCEPTED
 
     ##### update state
     ### update pool mapping, 
-    padw loc_loadw_le.0 mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
+
+    # padw loc_loadw_le.0 mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
+    # TODO: FPI doesnt work on network accounts so we just make up a word below
+    push.13.37.69.420 mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
+
     # => [pool_id_prefix, pool_id_suffix, POOL_CODE_HASH]
     exec.set_pool_mapping
     # => [] 

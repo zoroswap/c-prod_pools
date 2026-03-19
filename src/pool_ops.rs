@@ -1,20 +1,23 @@
 use crate::utils::{create_library, get_p2id_root_hash, read_masm_to_string};
 use anyhow::{Result, anyhow};
 use miden_client::{
-    Felt, Word,
+    Felt, Serializable, Word,
     account::AccountId,
     assembly::Library,
     asset::FungibleAsset,
     crypto::FeltRng,
-    note::{Note, NoteAssets, NoteMetadata, NoteRecipient, NoteTag, NoteType},
+    note::{
+        NetworkAccountTarget, Note, NoteAssets, NoteAttachment, NoteExecutionHint, NoteMetadata,
+        NoteRecipient, NoteTag, NoteType,
+    },
 };
 use miden_protocol::{
     FieldElement,
     crypto::rand::Randomizable,
-    note::{NoteInputs, NoteScript},
+    note::{NoteAttachmentContent, NoteInputs, NoteScript},
     transaction::{TransactionKernel, TransactionScript},
 };
-use miden_standards::StandardsLib;
+use miden_standards::{StandardsLib, note::WellKnownNoteAttachment};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use std::{fs, path::PathBuf};
 
@@ -227,7 +230,9 @@ pub fn build_lp_local_deposit_note(
     let inputs = NoteInputs::new(vec![user_id.prefix().into(), user_id.suffix()])?;
     let assets = NoteAssets::new(vec![token0_asset.into(), token1_asset.into()])?;
     let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
+    let attachment = NetworkAccountTarget::new(pool_id, NoteExecutionHint::Always)?;
+    let metadata =
+        NoteMetadata::new(sender, NoteType::Public, tag).with_attachment(attachment.into());
     let mut seed = [0; 32];
     // default from os to get initial seed
     let mut std_rng = StdRng::from_os_rng();

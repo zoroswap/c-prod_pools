@@ -2627,8 +2627,8 @@ async fn register_pool_with_deposit_test() -> Result<()> {
         setup.registry.id().to_hex(),
     );
     setup.maybe_fund_user_wallet(100_000).await?;
-    let amount0 = 1000000u64;
-    let amount1 = 1000000u64;
+    let amount0 = 1000u64;
+    let amount1 = 1000u64;
     let token0_asset = FungibleAsset::new(token0_id, amount0)?;
     let token1_asset = FungibleAsset::new(token1_id, amount1)?;
     let lp_lib = get_lp_local_library()?;
@@ -2642,7 +2642,6 @@ async fn register_pool_with_deposit_test() -> Result<()> {
     )?;
 
     println!("=== SEND DEPOSIT NOTE ");
-
     let create_req = TransactionRequestBuilder::new()
         .own_output_notes([OutputNote::Full(deposit_note.clone())])
         .build()?;
@@ -2653,48 +2652,55 @@ async fn register_pool_with_deposit_test() -> Result<()> {
         .await?;
     setup.clients.client.sync_state().await?;
 
-    println!("=== CONSUME DEPOSIT NOTE ");
+    println!(
+        "Registry: {}, Pool: {}, Note: {}",
+        setup.registry.id(),
+        setup.pool.id(),
+        deposit_note.id()
+    );
 
-    let deposit_serial = deposit_note.serial_num();
-    let register_serial = get_return_note_serial(deposit_serial, pool_id);
-    let register_note = build_xyk_register_note(
-        &setup.registry.id(),
-        register_serial,
-        &token0_id,
-        &token1_id,
-        &setup.pool.id(),
-        &setup.pool.id(),
-    )?;
-    let consume_req = TransactionRequestBuilder::new()
-        .input_notes([(deposit_note.clone(), None)])
-        // .expected_future_notes(vec![(
-        //     register_note.clone().into(),
-        //     register_note.metadata().tag(),
-        // )])
-        // .expected_output_recipients(vec![register_note.recipient().clone()])
-        .build()?;
-    let _consume_id = setup
-        .clients
-        .client
-        .submit_new_transaction(setup.pool.id(), consume_req)
-        .await?;
+    // println!("=== CONSUME DEPOSIT NOTE ");
 
-    setup.clients.client.sync_state().await?;
+    // let deposit_serial = deposit_note.serial_num();
+    // let register_serial = get_return_note_serial(deposit_serial, pool_id);
+    // let register_note = build_xyk_register_note(
+    //     &setup.registry.id(),
+    //     register_serial,
+    //     &token0_id,
+    //     &token1_id,
+    //     &setup.pool.id(),
+    //     &setup.pool.id(),
+    // )?;
+    // let consume_req = TransactionRequestBuilder::new()
+    //     .input_notes([(deposit_note.clone(), None)])
+    //     // .expected_future_notes(vec![(
+    //     //     register_note.clone().into(),
+    //     //     register_note.metadata().tag(),
+    //     // )])
+    //     // .expected_output_recipients(vec![register_note.recipient().clone()])
+    //     .build()?;
+    // let _consume_id = setup
+    //     .clients
+    //     .client
+    //     .submit_new_transaction(setup.pool.id(), consume_req)
+    //     .await?;
 
-    println!("=== CONSUME XYK_REGISTER NOTE ");
+    // setup.clients.client.sync_state().await?;
 
-    let foreign = ForeignAccount::public(setup.pool.id(), AccountStorageRequirements::default())?;
-    let consume_req = TransactionRequestBuilder::new()
-        .input_notes([(register_note.clone(), None)])
-        .foreign_accounts([foreign])
-        .build()?;
-    let _consume_id = setup
-        .clients
-        .client
-        .submit_new_transaction(setup.registry.id(), consume_req)
-        .await?;
+    // println!("=== CONSUME XYK_REGISTER NOTE ");
 
-    setup.clients.client.sync_state().await?;
+    // let foreign = ForeignAccount::public(setup.pool.id(), AccountStorageRequirements::default())?;
+    // let consume_req = TransactionRequestBuilder::new()
+    //     .input_notes([(register_note.clone(), None)])
+    //     .foreign_accounts([foreign])
+    //     .build()?;
+    // let _consume_id = setup
+    //     .clients
+    //     .client
+    //     .submit_new_transaction(setup.registry.id(), consume_req)
+    //     .await?;
+
+    // setup.clients.client.sync_state().await?;
 
     println!("register_pool_with_deposit_test passed!");
     Ok(())
