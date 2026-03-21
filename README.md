@@ -2,7 +2,7 @@
 
 **XYK** (“**x** times **y** equals **k**”) pools hold two token reserves so that (x * y = k) swaps move reserves along that curve and liquidity providers supply both sides of the pair.
 
-They matter in DeFi because they offer **permissionless liquidity**: anyone can pool assets and anyone can trade against a formula, without order books or centralized market makers. That makes markets for long-tail tokens, anchors **price discovery** from supply and demand, and plugs cleanly into the rest of the stack—aggregators, lending protocols, yield strategies, and treasuries can treat a pool as a composable “swap and quote” primitive.
+They matter in DeFi because they offer **permissionless liquidity**: anyone can pool assets and anyone can trade against a formula, without order books or centralized market makers. That makes markets for long-tail tokens, anchors **price discovery** from supply and demand, and plugs cleanly into the rest of the stack-aggregators, lending protocols, yield strategies, and treasuries can treat a pool as a composable “swap and quote” primitive.
 
 ## How to run
 
