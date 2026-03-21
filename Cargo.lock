@@ -1329,9 +1329,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.34.0"
+version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91632f3b4fb6bd1d72aa3d78f41ffecfcf2b1a6648d8c241dbe7dbfaf4875e15"
+checksum = "133c182a6a2c87864fe97778797e46c7e999672690dc9fa3ee8e241aa4a9c13f"
 dependencies = [
  "cc",
  "pkg-config",
@@ -1508,9 +1508,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client"
-version = "0.13.2"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b514cdc0fee994ab3d16e8678a93bcd0c6930c86f3f367e6b22dc6c6d81f2189"
+checksum = "801bf74eca3c3593d8584507b85578bc6eab8159a022ed6d2b247558c0d4b092"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1543,9 +1543,9 @@ dependencies = [
 
 [[package]]
 name = "miden-client-sqlite-store"
-version = "0.13.1"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6953d893fd6345c241aae854039426137dc1c78c3f07dfd405e51c4a16ea3fe2"
+checksum = "bc840b1b2883841286b4308648e17861ffaace9a6852b25aeff01d28ca918609"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2656,9 +2656,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.36.0"
+version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3de23c3319433716cf134eed225fe9986bc24f63bed9be9f20c329029e672dc7"
+checksum = "165ca6e57b20e1351573e3729b958bc62f0e48025386970b6e4d29e7a7e71f3f"
 dependencies = [
  "bitflags",
  "fallible-iterator",
@@ -2670,9 +2670,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite_migration"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a324f81362b5cd8f2eeef82d032172fdf2ca70aeec64962ff55a56874fe5ec41"
+checksum = "3fc9767ae49274bafd3e55be9d30405a033b7a59548327d87fd4971fbb58e264"
 dependencies = [
  "log",
  "rusqlite",
@@ -4328,7 +4328,7 @@ dependencies = [
 
 [[package]]
 name = "xyk_pool"
-version = "0.4.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -4343,7 +4343,6 @@ dependencies = [
  "miden-tx",
  "rand",
  "rand_chacha",
- "rusqlite",
  "serde",
  "serde_json",
  "tokio",

@@ -24,21 +24,20 @@ use miden_client_sqlite_store::ClientBuilderSqliteExt;
 use miden_protocol::{FieldElement, account::AccountComponent, transaction::TransactionKernel};
 use miden_standards::account::{faucets::BasicFungibleFaucet, wallets::BasicWallet};
 use rand::RngCore;
-use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    pool_ops::build_dummy_register_note,
-    utils::{create_library, extract_full_account, fetch_vault_for_account_from_chain, slot_name},
-};
+use crate::pool_ops::build_dummy_register_note;
 use crate::{
     pool_ops::{
         get_combined_pool_library, get_lp_local_fuzz_dummy_library, get_lp_local_library,
         get_pool_library, get_registry_library, get_storage_utils_library,
     },
-    utils::get_register_note_root_hash,
+    utils::{
+        create_library, extract_full_account, fetch_vault_for_account_from_chain,
+        get_register_note_root_hash, slot_name,
+    },
 };
 
 use miden_client::{Client, rpc::Endpoint};
@@ -195,7 +194,7 @@ pub async fn deploy_lp_local_pool(
     keystore: FilesystemKeyStore,
     token0_id: &AccountId,
     token1_id: &AccountId,
-) -> Result<(Account, AuthSecretKey), ClientError> {
+) -> Result<(Account, AuthSecretKey)> {
     let _ = (token0_id, token1_id);
     let lp_local_library = get_lp_local_library()
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
@@ -225,6 +224,9 @@ pub async fn deploy_lp_local_pool(
         slot_name("zoro::lp_local::user_deposits_mapping"),
         user_deposits_mapping,
     );
+    let registry_id_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::registry_id"));
+    let register_note_root =
+        StorageSlot::with_empty_value(slot_name("zoro::lp_local::register_note_root"));
 
     let lp_local_component = AccountComponent::new(
         lp_local_library,
@@ -233,6 +235,8 @@ pub async fn deploy_lp_local_pool(
             reserve_slot,
             total_supply_slot,
             user_deposits_slot,
+            registry_id_slot,
+            register_note_root,
         ],
     )
     .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
@@ -257,12 +261,7 @@ pub async fn deploy_lp_local_pool(
         .add_account(&lp_local_contract.clone(), false)
         .await?;
     client.sync_state().await?;
-
-    // let dummy_tx = TransactionRequestBuilder::new().build()?;
-    // let _ = client
-    //     .submit_new_transaction(lp_local_contract.id(), dummy_tx)
-    //     .await?;
-    // client.sync_state().await?;
+    touch_account(client, &lp_local_contract).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     Ok((lp_local_contract, key_pair))
@@ -400,7 +399,6 @@ pub async fn deploy_lp_local_fuzz_dummy(
 ) -> Result<(Account, AuthSecretKey), ClientError> {
     let lp_local_fuzz_dummy_library = get_lp_local_fuzz_dummy_library()
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
-
     let reserve_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
     let total_supply_slot =
         StorageSlot::with_empty_value(slot_name("zoro::lp_local::total_supply"));
@@ -415,6 +413,9 @@ pub async fn deploy_lp_local_fuzz_dummy(
         slot_name("zoro::lp_local::user_deposits_mapping"),
         user_deposits_mapping,
     );
+    let registry_id_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::registry_id"));
+    let register_note_root =
+        StorageSlot::with_empty_value(slot_name("zoro::lp_local::register_note_root"));
 
     let component = AccountComponent::new(
         lp_local_fuzz_dummy_library,
@@ -423,6 +424,8 @@ pub async fn deploy_lp_local_fuzz_dummy(
             reserve_slot,
             total_supply_slot,
             user_deposits_slot,
+            registry_id_slot,
+            register_note_root,
         ],
     )
     .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
@@ -443,8 +446,6 @@ pub async fn deploy_lp_local_fuzz_dummy(
     keystore.add_key(&key_pair).unwrap();
     client.add_account(&contract.clone(), false).await?;
     client.sync_state().await?;
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
     Ok((contract, key_pair))
 }
 
@@ -609,23 +610,22 @@ pub async fn deploy_registry(
     client.add_account(&registry, true).await?;
     client.sync_state().await?;
 
-    let _ = touch_account(client, &registry).await;
-    // println!("touch account");
+    // let _ = touch_account(client, &registry).await;
 
-    // println!("Dummy register note ...");
+    println!("Dummy register note ...");
 
-    // let dummy_register = build_dummy_register_note(&registry.id(), client.rng().draw_word());
-    // let init_note_tx = TransactionRequestBuilder::new()
-    //     .own_output_notes([OutputNote::Full(dummy_register)])
-    //     .build()?;
+    let dummy_register = build_dummy_register_note(&registry.id(), client.rng().draw_word());
+    let init_note_tx = TransactionRequestBuilder::new()
+        .own_output_notes([OutputNote::Full(dummy_register)])
+        .build()?;
 
-    // println!("Dummy register note BUILT ");
+    println!("Dummy register note BUILT ");
 
-    // client
-    //     .submit_new_transaction(registry.id(), init_note_tx)
-    //     .await?;
+    client
+        .submit_new_transaction(registry.id(), init_note_tx)
+        .await?;
 
-    // println!("Dummy register note sent");
+    println!("Dummy register note sent");
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 
