@@ -18,7 +18,7 @@ begin
     exec.active_note::get_sender
     # => [sender_prefix, sender_suffix]
     padw mem_loadw_be.0 padw mem_loadw_be.4
-    # => [ASSET0, ASSET1, sender_prefix, sender_suffix ]
+    # => [ASSET0, ASSET1, sender_prefix, sender_suffix]
     call.lp_local::deposit
     exec.sys::truncate_stack
 end

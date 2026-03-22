@@ -1,0 +1,192 @@
+use miden::protocol::active_account
+use miden::protocol::native_account
+use miden::protocol::tx
+#use miden::protocol::asset_id
+use miden::core::math::u64
+
+use miden::core::sys
+
+
+use zoro::storage_utils
+use zoro::math
+use zoro::xyk_pool
+
+##### STORAGE SLOTS
+
+### ACCEPTED_CODE_HASHES_MAPPING: code_hash -> bool
+const ACCEPTED_CODE_HASHES_MAPPING_SLOT = word("zoro::registry::accepted_code_hashes_mapping")
+
+### POOLS MAPPING: pool_id -> pool_code_hash
+const POOLS_MAPPING = word("zoro::registry::pools_mapping")
+### ASSETS_TO_POOL_MAPPING: (asset_0_id, asset_1_id) -> pool_id
+const ASSETS_TO_POOL_MAPPING = word("zoro::registry::assets_to_pool_mapping")
+
+### ERRORS
+const ERR_POOL_ID_ALREADY_REGISTERED = "Pool id already registered"
+const ERR_POOL_FOR_ASSETS_ALREADY_REGISTERED = "Pool for these assets already registered"
+const ERR_POOL_CODE_HASH_NOT_ACCEPTED = "Pool code hash not accepted"
+const ERR_BOTH_ASSETS_ARE_THE_SAME = "Both assets are the same"
+
+
+#### MEMORY LOCATIONS
+const POOL_ID_WORD = 20
+const POOL_ID_PREFIX = 20
+const POOL_ID_SUFFIX = 21
+
+
+const POOL_ASSETS_WORD  = 24
+const ASSET_0_ID_PREFIX = 24
+const ASSET_0_ID_SUFFIX = 25
+const ASSET_1_ID_PREFIX = 26
+const ASSET_1_ID_SUFFIX = 27
+
+@locals(4)
+pub proc register_pool(
+    pool_id_prefix: felt, pool_id_suffix: felt, 
+    asset_0_id_prefix: felt, asset_0_id_suffix: felt, 
+    asset_1_id_prefix: felt, asset_1_id_suffix: felt
+)
+
+    push.0 drop
+    
+    # loc.0-3: pool_code_hash
+    mem_store.POOL_ID_PREFIX mem_store.POOL_ID_SUFFIX
+    exec.order_assets mem_storew_le.POOL_ASSETS_WORD dropw
+    # => []
+
+    ## check of pool id already registered 
+    padw mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX exec.is_pool_registered
+    ## => [is_pool_registered]
+    eq.0 assert.err=ERR_POOL_ID_ALREADY_REGISTERED
+
+    ### check if pool for assets already registered
+    padw mem_loadw_le.POOL_ASSETS_WORD exec.get_pool_for_assets swap drop
+    # => [pool_id_prefix]
+    eq.0 assert.err=ERR_POOL_FOR_ASSETS_ALREADY_REGISTERED
+
+    ### get pool code hash via FPI
+    procref.xyk_pool::get_account_code_commitment mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
+
+    # => [pool_id_prefix, pool_id_suffix, GET_CODE_COMMITMENT_HASH]
+    exec.tx::execute_foreign_procedure loc_storew_le.0
+
+    # => [POOL_CODE_HASH]
+    ### validate pool code hash 
+    exec.validate_pool_code_hash
+
+    # => [is_code_hash_accepted]
+    assert.err=ERR_POOL_CODE_HASH_NOT_ACCEPTED
+
+    ##### update state
+    ### update pool mapping, 
+    padw loc_loadw_le.0 mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX
+    # => [pool_id_prefix, pool_id_suffix, POOL_CODE_HASH]
+    exec.set_pool_mapping
+    # => [] 
+
+    ### update assets to pool mapping
+    mem_load.POOL_ID_SUFFIX mem_load.POOL_ID_PREFIX exec.pool_id_to_key
+    # => [POOL_ID_KEY]
+    padw mem_loadw_le.POOL_ASSETS_WORD 
+    # => [POOL_ASSETS_WORD, POOL_ID_KEY]
+    exec.set_assets_to_pool_mapping
+    ## => []
+    exec.sys::truncate_stack
+
+end
+
+##### SETTERS
+proc set_pool_mapping(pool_id_preffix: felt, pool_id_suffix: felt, pool_code_hash: word)
+    exec.pool_id_to_key
+    # => [POOL_ID_KEY, POOL_CODE_HASH]
+    push.POOLS_MAPPING[0..2] exec.native_account::set_map_item
+    exec.sys::truncate_stack
+end
+
+proc set_assets_to_pool_mapping(pool_assets_word: word, pool_id_key: word)
+    exec.order_assets swapw
+    # => [POOL_ID_KEY,POOL_ASSETS_WORD]
+    push.ASSETS_TO_POOL_MAPPING[0..2] exec.native_account::set_map_item
+    exec.sys::truncate_stack
+end
+
+
+
+
+##### VALIDATORS
+pub proc validate_pool_code_hash(pool_code_hash: word) -> i1
+    push.ACCEPTED_CODE_HASHES_MAPPING_SLOT[0..2] exec.active_account::get_map_item
+    drop drop drop
+    # => [is_code_hash_accepted]
+    exec.sys::truncate_stack
+end
+
+pub proc is_pool_registered(pool_id_prefix: felt, pool_id_suffix: felt) -> i1
+    exec.get_pool_code_hash
+    # => [POOL_CODE_HASH]
+    ### check if empty
+    drop drop drop neq.0
+    if.true # code hash not empty - return true
+        push.1
+    else # code hash empty - return false   
+        push.0
+    end
+    exec.sys::truncate_stack
+end
+
+##### HELPER PROCEDURES
+@locals(5)
+pub proc order_assets(asset_0_id_prefix: felt, asset_0_id_suffix: felt, asset_1_id_prefix: felt, asset_1_id_suffix: felt) -> word
+    # loc.0: asset_0_id_prefix
+    # loc.1: asset_0_id_suffix
+    # loc.2: asset_1_id_prefix
+    # loc.3: asset_1_id_suffix
+    # loc.4: comparison result
+    loc_store.0 loc_store.1 loc_store.2 loc_store.3
+
+    ##### compare prefixes
+    loc_load.0 loc_load.2 exec.math::compare_felts loc_store.4 loc_load.4
+    # => [prefix comparison result]
+    eq.1 if.true # prefix 1 smaller -> keep order
+        padw loc_loadw_le.0
+    else 
+        loc_load.4 eq.2 if.true # prefix 1 bigger -> reverse order
+            loc_load.1 loc_load.0 loc_load.3 loc_load.2
+        else # prefixes are equal - compare suffixes
+            loc_load.1 loc_load.3 exec.math::compare_felts loc_store.4 loc_load.4
+            # => [suffix comparison result]
+            eq.1 if.true # suffix 1 smaller -> keep order
+                padw loc_loadw_le.0
+            else
+                loc_load.4 eq.2 if.true # suffix 1 bigger -> reverse order
+                    loc_load.1 loc_load.0 loc_load.3 loc_load.2
+                else # suffixes are equal and prefixes are equal - both are the same asset - revert
+                    push.0 assert.err=ERR_BOTH_ASSETS_ARE_THE_SAME
+                end
+                
+            end
+        end
+    end
+      
+    exec.sys::truncate_stack
+end
+
+
+pub proc get_pool_for_assets(pool_assets_word: word) -> (felt, felt)
+    exec.order_assets
+    push.ASSETS_TO_POOL_MAPPING[0..2] exec.active_account::get_map_item
+    drop drop
+    exec.sys::truncate_stack
+end
+
+pub proc get_pool_code_hash(pool_id_prefix: felt, pool_id_suffix: felt) -> word
+    push.0.0
+    # => [0, 0, pool_id_prefix, pool_id_suffix]  ==  [KEY]
+    push.POOLS_MAPPING[0..2] exec.active_account::get_map_item
+    exec.sys::truncate_stack
+end
+
+pub proc pool_id_to_key(pool_id_prefix: felt, pool_id_suffix: felt) -> word
+    push.0.0
+    # => [0, 0, pool_id_prefix, pool_id_suffix]  ==  [KEY]
+end

@@ -1,52 +1,44 @@
-use anyhow::{Context, Result, anyhow};
-use miden_client::{
-    ClientError, DebugMode, Felt, Word,
-    account::{
-        Account, AccountBuilder, AccountId, AccountStorageMode, AccountType, StorageMap,
-        StorageSlot, StorageSlotName,
-    },
-    asset::{AssetVault, FungibleAsset, TokenSymbol},
-    auth::{AuthFalcon512Rpo, AuthSecretKey, NoAuth},
-    builder::ClientBuilder,
-    keystore::FilesystemKeyStore,
-    note::{
-        Note, NoteAssets, NoteError, NoteMetadata, NoteRecipient, NoteScreener, NoteTag, NoteType,
-    },
-    rpc::{GrpcClient, NodeRpcClient, domain::account::FetchedAccount},
-    store::TransactionFilter,
-    sync::StateSync,
-    transaction::{OutputNote, TransactionRequestBuilder},
-};
-use miden_standards::account::{faucets::BasicFungibleFaucet, wallets::BasicWallet};
-
-use rand::RngCore;
-
-use miden_client_sqlite_store::{ClientBuilderSqliteExt, SqliteStore};
-use miden_protocol::{
-    FieldElement, account::AccountComponent, crypto::hash::rpo::Rpo256,
-    transaction::TransactionKernel,
-};
-
-use miden_standards::code_builder::CodeBuilder;
-use miden_standards::note::utils::build_p2id_recipient;
-use rusqlite::Connection;
 use std::sync::Arc;
 use std::{fs, path::PathBuf, time::Duration};
+
+use anyhow::{Context, Result, anyhow};
+use miden_client::auth::NoAuth;
+use miden_client::note::NoteTag;
+use miden_client::{
+    ClientError, Felt, Word,
+    account::{
+        Account, AccountBuilder, AccountId, AccountStorageMode, AccountType, StorageMap,
+        StorageSlot,
+    },
+    asset::{FungibleAsset, TokenSymbol},
+    auth::{AuthFalcon512Rpo, AuthSecretKey},
+    builder::ClientBuilder,
+    crypto::FeltRng,
+    keystore::FilesystemKeyStore,
+    note::{Note, NoteError, NoteType},
+    rpc::GrpcClient,
+    store::TransactionFilter,
+    transaction::{OutputNote, TransactionRequestBuilder},
+};
+use miden_client_sqlite_store::ClientBuilderSqliteExt;
+use miden_protocol::{FieldElement, account::AccountComponent, transaction::TransactionKernel};
+use miden_standards::account::{faucets::BasicFungibleFaucet, wallets::BasicWallet};
+use rand::RngCore;
 use tracing::{debug, info, warn};
 
 use serde::{Deserialize, Serialize};
 
-use crate::pool_ops::{
-    get_combined_pool_library, get_lp_local_fuzz_dummy_library, get_lp_local_library,
-    get_math_library, get_pool_library, get_storage_utils_library,
+use crate::pool_ops::build_dummy_register_note;
+use crate::{
+    pool_ops::{
+        get_combined_pool_library, get_lp_local_fuzz_dummy_library, get_lp_local_library,
+        get_pool_library, get_registry_library, get_storage_utils_library,
+    },
+    utils::{
+        create_library, extract_full_account, fetch_vault_for_account_from_chain,
+        get_register_note_root_hash, slot_name,
+    },
 };
-use crate::utils::{
-    create_library, extract_full_account, fetch_vault_for_account_from_chain, read_masm_to_string,
-    slot_name,
-};
-
-//use crate::{Config, order::OrderType};
-//use zoro_miden_client::{MidenClient, create_library};
 
 use miden_client::{Client, rpc::Endpoint};
 pub type MidenClient = Client<FilesystemKeyStore>;
@@ -113,10 +105,7 @@ pub async fn create_basic_account(
     client.sync_state().await?;
 
     // dummy tx to get the new account into node
-    let transaction_request = TransactionRequestBuilder::new().build()?;
-    let _tx_id = client
-        .submit_new_transaction(account.id(), transaction_request)
-        .await?;
+    touch_account(client, &account).await.unwrap();
 
     Ok((account, key_pair))
 }
@@ -205,7 +194,7 @@ pub async fn deploy_lp_local_pool(
     keystore: FilesystemKeyStore,
     token0_id: &AccountId,
     token1_id: &AccountId,
-) -> Result<(Account, AuthSecretKey), ClientError> {
+) -> Result<(Account, AuthSecretKey)> {
     let _ = (token0_id, token1_id);
     let lp_local_library = get_lp_local_library()
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
@@ -235,6 +224,9 @@ pub async fn deploy_lp_local_pool(
         slot_name("zoro::lp_local::user_deposits_mapping"),
         user_deposits_mapping,
     );
+    let registry_id_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::registry_id"));
+    let register_note_root =
+        StorageSlot::with_empty_value(slot_name("zoro::lp_local::register_note_root"));
 
     let lp_local_component = AccountComponent::new(
         lp_local_library,
@@ -243,6 +235,8 @@ pub async fn deploy_lp_local_pool(
             reserve_slot,
             total_supply_slot,
             user_deposits_slot,
+            registry_id_slot,
+            register_note_root,
         ],
     )
     .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
@@ -267,12 +261,7 @@ pub async fn deploy_lp_local_pool(
         .add_account(&lp_local_contract.clone(), false)
         .await?;
     client.sync_state().await?;
-
-    // let dummy_tx = TransactionRequestBuilder::new().build()?;
-    // let _ = client
-    //     .submit_new_transaction(lp_local_contract.id(), dummy_tx)
-    //     .await?;
-    // client.sync_state().await?;
+    touch_account(client, &lp_local_contract).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     Ok((lp_local_contract, key_pair))
@@ -293,6 +282,7 @@ pub async fn deploy_combined_pool(
     keystore: FilesystemKeyStore,
     token0_id: &AccountId,
     token1_id: &AccountId,
+    registry_id: &AccountId,
 ) -> Result<(Account, AuthSecretKey), ClientError> {
     let lp_local_library = get_lp_local_library()
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
@@ -316,6 +306,28 @@ pub async fn deploy_combined_pool(
     let reserve_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
     let total_supply_slot =
         StorageSlot::with_empty_value(slot_name("zoro::lp_local::total_supply"));
+    let registry_id_slot = StorageSlot::with_value(
+        slot_name("zoro::lp_local::registry_id"),
+        Word::new([
+            registry_id.suffix(),
+            registry_id.prefix().into(),
+            Felt::ZERO,
+            Felt::ZERO,
+        ]),
+    );
+
+    println!(
+        "REGISTRY SUFFIX {} PREFIX {} TAG {} NOTE_ROOT_HASH {:?}",
+        registry_id.suffix(),
+        registry_id.prefix().as_felt(),
+        NoteTag::with_account_target(*registry_id),
+        get_register_note_root_hash()
+    );
+
+    let register_note_root = StorageSlot::with_value(
+        slot_name("zoro::lp_local::register_note_root"),
+        get_register_note_root_hash(),
+    );
     let mut user_deposits_mapping = StorageMap::new();
     user_deposits_mapping.insert(
         Word::new([Felt::new(0), Felt::new(0), Felt::new(0), Felt::new(1)]),
@@ -333,6 +345,8 @@ pub async fn deploy_combined_pool(
             reserve_slot,
             total_supply_slot,
             user_deposits_slot,
+            registry_id_slot,
+            register_note_root,
         ],
     )
     .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
@@ -347,11 +361,11 @@ pub async fn deploy_combined_pool(
     let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
 
     let contract = AccountBuilder::new(init_seed)
-        .account_type(AccountType::RegularAccountUpdatableCode)
+        .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Public)
         .with_component(lp_local_component)
         .with_component(xyk_pool_component)
-        .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
+        .with_auth_component(NoAuth)
         .with_component(BasicWallet)
         .build()
         .map_err(|e| anyhow!("Failed to build combined pool contract: {e:?}"))
@@ -362,10 +376,13 @@ pub async fn deploy_combined_pool(
         contract.id().to_hex()
     );
 
-    keystore.add_key(&key_pair).unwrap();
-    client.add_account(&contract.clone(), false).await?;
+    // keystore.add_key(&key_pair).unwrap();
+    client.add_account(&contract.clone(), true).await?;
     client.sync_state().await?;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    touch_account(client, &contract).await.unwrap();
+
+    // sleep(Duration::from_secs(5)).await;
 
     Ok((contract, key_pair))
 }
@@ -382,7 +399,6 @@ pub async fn deploy_lp_local_fuzz_dummy(
 ) -> Result<(Account, AuthSecretKey), ClientError> {
     let lp_local_fuzz_dummy_library = get_lp_local_fuzz_dummy_library()
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
-
     let reserve_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
     let total_supply_slot =
         StorageSlot::with_empty_value(slot_name("zoro::lp_local::total_supply"));
@@ -397,6 +413,9 @@ pub async fn deploy_lp_local_fuzz_dummy(
         slot_name("zoro::lp_local::user_deposits_mapping"),
         user_deposits_mapping,
     );
+    let registry_id_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::registry_id"));
+    let register_note_root =
+        StorageSlot::with_empty_value(slot_name("zoro::lp_local::register_note_root"));
 
     let component = AccountComponent::new(
         lp_local_fuzz_dummy_library,
@@ -405,6 +424,8 @@ pub async fn deploy_lp_local_fuzz_dummy(
             reserve_slot,
             total_supply_slot,
             user_deposits_slot,
+            registry_id_slot,
+            register_note_root,
         ],
     )
     .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
@@ -425,8 +446,6 @@ pub async fn deploy_lp_local_fuzz_dummy(
     keystore.add_key(&key_pair).unwrap();
     client.add_account(&contract.clone(), false).await?;
     client.sync_state().await?;
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
     Ok((contract, key_pair))
 }
 
@@ -520,6 +539,97 @@ pub async fn deploy_storage_fuzz_dummy(
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     Ok((dummy_contract, key_pair))
+}
+
+/// Deploys a registry account pre-seeded with an accepted pool code hash.
+///
+/// Storage slots (must match constants in registry.masm):
+///   - `accepted_code_hashes_mapping`: map with pool_code_hash → [1, 0, 0, 0]
+///   - `pools_mapping`: empty map
+///   - `assets_to_pool_mapping`: empty map
+pub async fn deploy_registry(
+    client: &mut MidenClient,
+    keystore: FilesystemKeyStore,
+    accepted_pool_code_hash: Word,
+) -> Result<(Account, AuthSecretKey), ClientError> {
+    let registry_library = get_registry_library()
+        .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
+
+    let mut accepted_hashes_map = StorageMap::new();
+
+    println!("account pool code hash {:?}", accepted_pool_code_hash);
+
+    accepted_hashes_map.insert(
+        accepted_pool_code_hash,
+        Word::new([Felt::new(1), Felt::new(0), Felt::new(0), Felt::new(0)]),
+    )?;
+    let accepted_hashes_slot = StorageSlot::with_map(
+        slot_name("zoro::registry::accepted_code_hashes_mapping"),
+        accepted_hashes_map,
+    );
+
+    let pools_mapping_slot =
+        StorageSlot::with_empty_map(slot_name("zoro::registry::pools_mapping"));
+
+    let assets_to_pool_mapping_slot =
+        StorageSlot::with_empty_map(slot_name("zoro::registry::assets_to_pool_mapping"));
+
+    let registry_component = AccountComponent::new(
+        registry_library,
+        vec![
+            pools_mapping_slot,
+            assets_to_pool_mapping_slot,
+            accepted_hashes_slot,
+        ],
+    )
+    .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?
+    .with_supports_all_types();
+
+    let mut init_seed = [0_u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+    let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
+
+    let registry = AccountBuilder::new(init_seed)
+        .account_type(AccountType::RegularAccountImmutableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(registry_component)
+        // .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
+        .with_auth_component(NoAuth)
+        .with_component(BasicWallet)
+        .build()
+        .map_err(|e| anyhow!("Failed to build registry contract: {e:?}"))
+        .unwrap();
+
+    println!(
+        "Registry deployed => ID: {:?}, accepted code hash: {:?}",
+        registry.id().to_hex(),
+        accepted_pool_code_hash,
+    );
+
+    keystore.add_key(&key_pair).unwrap();
+    client.add_account(&registry, true).await?;
+    client.sync_state().await?;
+
+    // let _ = touch_account(client, &registry).await;
+
+    println!("Dummy register note ...");
+
+    let dummy_register = build_dummy_register_note(&registry.id(), client.rng().draw_word());
+    let init_note_tx = TransactionRequestBuilder::new()
+        .own_output_notes([OutputNote::Full(dummy_register)])
+        .build()?;
+
+    println!("Dummy register note BUILT ");
+
+    client
+        .submit_new_transaction(registry.id(), init_note_tx)
+        .await?;
+
+    println!("Dummy register note sent");
+
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    Ok((registry, key_pair))
 }
 
 #[derive(Deserialize, Debug)]
@@ -638,10 +748,7 @@ pub async fn deploy_simple_faucet(
 
     client.sync_state().await?;
     // dummy tx to get the new account into node
-    let transaction_request = TransactionRequestBuilder::new().build()?;
-    let _tx_id = client
-        .submit_new_transaction(faucet_account.id(), transaction_request)
-        .await?;
+    touch_account(client, &faucet_account).await.unwrap();
 
     Ok(faucet_account)
 }
@@ -769,28 +876,21 @@ pub async fn wait_for_note(client: &mut MidenClient, expected: &Note) -> Result<
 }
 
 pub fn get_return_note_serial(input_note_serial: Word, user_id: AccountId) -> Word {
-    // let user_id_word = Word::new([
-    //     Felt::ZERO,
-    //     Felt::ZERO,
-    //     user_id.prefix().as_felt(),
-    //     user_id.suffix(),
-    // ]);
-    // let mut serial_reversed = input_note_serial.clone();
-    // serial_reversed.reverse();
-
-    // let mut user_id_word_reversed = user_id_word.clone();
-    // user_id_word_reversed.reverse();
-    // // Rpo256::merge(&[user_id_word, serial_reversed])
-    // Rpo256::merge(&[user_id_word_reversed, input_note_serial])
-    [
+    let mut serial = Word::new([
         input_note_serial[3] + Felt::new(1),
         input_note_serial[2],
         input_note_serial[1],
         input_note_serial[0],
-        // input_note_serial[0],
-        // input_note_serial[1],
-        // input_note_serial[2],
-        // input_note_serial[3] + Felt::new(1),
-    ]
-    .into()
+    ]);
+    serial.reverse();
+    serial
+}
+
+pub async fn touch_account(client: &mut MidenClient, account: &Account) -> Result<()> {
+    let transaction_request = TransactionRequestBuilder::new().build()?;
+    let _tx_id = client
+        .submit_new_transaction(account.id(), transaction_request)
+        .await?;
+    client.sync_state().await?;
+    Ok(())
 }

@@ -1,23 +1,31 @@
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
+};
+
+use crate::{
+    common::{
+        CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
+        deploy_combined_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool, deploy_registry,
+        deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, deploy_xyk_pool, fund_wallet,
+        instantiate_simple_client, load_test_state, save_test_state, try_import_account,
+    },
+    pool_ops::{build_lp_local_deposit_note, get_lp_local_library},
+    utils::{fetch_vault_for_account_from_chain, get_pool_account_code_commitment, slot_name},
+};
 use anyhow::{Result, anyhow};
 use miden_client::{
     Felt,
     account::{Account, AccountId},
     asset::FungibleAsset,
+    crypto::FeltRng,
     keystore::FilesystemKeyStore,
     note::NoteTag,
     rpc::Endpoint,
     store::AccountRecordData,
     transaction::{OutputNote, TransactionRequestBuilder},
 };
-use std::{env, fs, path::PathBuf};
-use xyk_pool::common::{
-    CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
-    deploy_combined_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool,
-    deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, deploy_xyk_pool, fund_wallet,
-    instantiate_simple_client, load_test_state, save_test_state, try_import_account,
-};
-use xyk_pool::pool_ops::{build_lp_local_deposit_note, get_lp_local_library};
-use xyk_pool::utils::{fetch_vault_for_account_from_chain, slot_name};
 
 const DEFAULT_FUND_AMOUNT: u64 = 1_000_000_000_000;
 
@@ -44,7 +52,7 @@ impl TestSetup {
         Ok(())
     }
 
-    pub async fn maybe_fund_user_wallet(&mut self, amount: u64) -> Result<()> {
+    pub async fn maybe_fund_user_wallet(&mut self, amount: u64, min_amount: u64) -> Result<()> {
         self.clients.client.sync_state().await?;
         let vault =
             fetch_vault_for_account_from_chain(&self.clients.rpc_api, &self.user.id()).await?;
@@ -52,7 +60,7 @@ impl TestSetup {
         for asset in self.faucets.iter() {
             let faucet_id = asset.faucet.id();
             let current = vault.get_balance(faucet_id).unwrap_or(0);
-            if current >= amount {
+            if current >= min_amount {
                 println!(
                     "{}: balance {} >= {}, skipping funding",
                     asset.config.symbol, current, amount
@@ -96,8 +104,9 @@ pub async fn lp_local_deposit(
     let lp_lib = get_lp_local_library()?;
     let token0_id = setup.faucets[0].faucet.id();
     let token1_id = setup.faucets[1].faucet.id();
-    let token0_asset = FungibleAsset::new(token0_id.clone(), token0_amount)?;
-    let token1_asset = FungibleAsset::new(token1_id.clone(), token1_amount)?;
+    let token0_asset = FungibleAsset::new(token0_id, token0_amount)?;
+    let token1_asset = FungibleAsset::new(token1_id, token1_amount)?;
+    setup.clients.client.rng().draw_word();
 
     let deposit_note = build_lp_local_deposit_note(
         setup.contract.id(),
@@ -106,6 +115,7 @@ pub async fn lp_local_deposit(
         token1_asset,
         sender,
         sender,
+        setup.clients.client.rng().draw_word(),
     )?;
 
     let pool_tag = NoteTag::with_account_target(setup.contract.id());
@@ -134,7 +144,7 @@ pub async fn lp_local_deposit(
     let acc = setup
         .clients
         .client
-        .get_account(setup.contract.id().clone())
+        .get_account(setup.contract.id())
         .await?
         .unwrap();
     let acc = match acc.account_data() {
@@ -171,8 +181,8 @@ fn resolve_endpoint() -> (String, Endpoint) {
     (label, endpoint)
 }
 
-fn maybe_clean_store(base_dir: &PathBuf) {
-    let force_fresh = env::var("CLEAN_TEST").map_or(false, |v| v == "1");
+fn maybe_clean_store(base_dir: &Path) {
+    let force_fresh = env::var("CLEAN_TEST").is_ok_and(|v| v == "1");
     if force_fresh {
         let store_path = base_dir.join("store.sqlite3");
         if store_path.exists() {
@@ -186,7 +196,7 @@ fn maybe_clean_store(base_dir: &PathBuf) {
 }
 
 async fn init_clients(
-    base_dir: &PathBuf,
+    base_dir: &Path,
     endpoint: &Endpoint,
 ) -> Result<(MidenClients, FilesystemKeyStore)> {
     maybe_clean_store(base_dir);
@@ -242,9 +252,7 @@ async fn deploy_fresh(
     keystore: &FilesystemKeyStore,
 ) -> Result<(Vec<Faucet>, Account)> {
     let client = &mut clients.client;
-
     let faucets = deploy_simple_faucets_from_config(client, keystore).await?;
-
     println!("\nCreating user account...");
     let (user, _) = create_basic_account(client, keystore.clone()).await?;
     println!(
@@ -276,10 +284,10 @@ fn build_cached_state(faucets: &[Faucet], user: &Account) -> CachedTestState {
 async fn resolve_faucets_and_user(
     clients: &mut MidenClients,
     keystore: &FilesystemKeyStore,
-    base_dir: &PathBuf,
+    base_dir: &Path,
 ) -> Result<(Vec<Faucet>, Account, bool)> {
     let state_path = base_dir.join("test_state.toml");
-    let force_fresh = env::var("CLEAN_TEST").map_or(false, |v| v == "1");
+    let force_fresh = env::var("CLEAN_TEST").is_ok_and(|v| v == "1");
     let mut is_user_fresh = force_fresh;
     let (faucets, user) = if force_fresh {
         println!("CLEAN_TEST=1 — deploying fresh faucets and user.");
@@ -328,11 +336,10 @@ pub fn expected_amount_in(amount_out: Felt, reserve_in: Felt, reserve_out: Felt)
     Felt::new((numerator / denominator) as u64)
 }
 
-pub fn expected_quote(amount_A: Felt, reserve_A: Felt, reserve_B: Felt) -> Felt {
-    let amount_B =
-        amount_A.as_int() as u128 * reserve_B.as_int() as u128 / reserve_A.as_int() as u128;
-
-    Felt::new(amount_B as u64)
+pub fn expected_quote(amount_a: Felt, reserve_a: Felt, reserve_b: Felt) -> Felt {
+    let amount_b =
+        amount_a.as_int() as u128 * reserve_b.as_int() as u128 / reserve_a.as_int() as u128;
+    Felt::new(amount_b as u64)
 }
 
 /// Minimal setup: client + one basic account. No faucets, no contract deployment.
@@ -497,11 +504,19 @@ pub async fn setup_combined_pool_test_environment() -> Result<TestSetup> {
 
     let token0_id = faucets[0].faucet.id();
     let token1_id = faucets[1].faucet.id();
+    let (registry, _) = deploy_registry(
+        &mut clients.client,
+        keystore.clone(),
+        get_pool_account_code_commitment(),
+    )
+    .await?;
+
     let (combined_pool, _) = deploy_combined_pool(
         &mut clients.client,
         keystore.clone(),
         &token0_id,
         &token1_id,
+        &registry.id(),
     )
     .await?;
 
@@ -517,4 +532,123 @@ pub async fn setup_combined_pool_test_environment() -> Result<TestSetup> {
     }
 
     Ok(setup)
+}
+
+pub struct RegistryTestSetup {
+    pub clients: MidenClients,
+    pub registry: Account,
+    pub pool: Account,
+    pub faucets: Vec<Faucet>,
+    pub user: Account,
+}
+
+impl RegistryTestSetup {
+    pub async fn maybe_fund_user_wallet(&mut self, amount: u64, min_amount: u64) -> Result<()> {
+        self.clients.client.sync_state().await?;
+        let vault =
+            fetch_vault_for_account_from_chain(&self.clients.rpc_api, &self.user.id()).await?;
+
+        for asset in self.faucets.iter() {
+            let faucet_id = asset.faucet.id();
+            let current = vault.get_balance(faucet_id).unwrap_or(0);
+            if current >= min_amount {
+                println!(
+                    "{}: balance {} >= {}, skipping funding",
+                    asset.config.symbol, current, amount
+                );
+                continue;
+            }
+            let needed = amount - current;
+            println!(
+                "{}: balance {} < {}, funding {} more",
+                asset.config.symbol, current, amount, needed
+            );
+            fund_wallet(
+                &mut self.clients,
+                &self.user,
+                &asset.config,
+                &faucet_id,
+                needed,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+}
+
+/// Registry + combined pool E2E setup.
+/// Deploys faucets, user, a combined pool, then a registry pre-seeded with the pool's code hash.
+pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
+    dotenv::dotenv().ok();
+    let (label, endpoint) = resolve_endpoint();
+    let base_dir = PathBuf::from("tmp").join(&label);
+    fs::create_dir_all(&base_dir)?;
+
+    let (mut clients, keystore) = init_clients(&base_dir, &endpoint).await?;
+    let (faucets, user, _) = resolve_faucets_and_user(&mut clients, &keystore, &base_dir).await?;
+
+    let token0_id = faucets[0].faucet.id();
+    let token1_id = faucets[1].faucet.id();
+
+    let (registry, _) = deploy_registry(
+        &mut clients.client,
+        keystore.clone(),
+        get_pool_account_code_commitment(),
+    )
+    .await?;
+
+    println!("====== REGISTRY DEPLOYED");
+
+    let (pool, _) = deploy_combined_pool(
+        &mut clients.client,
+        keystore.clone(),
+        &token0_id,
+        &token1_id,
+        &registry.id(),
+    )
+    .await?;
+
+    println!("====== XYK POOL DEPLOYED");
+
+    let pool_code_hash = pool.code().commitment();
+    println!(
+        "Pool code generated commitment: {:?}",
+        get_pool_account_code_commitment()
+    );
+    println!("Pool code commitment: {:?}", pool_code_hash);
+
+    let pool_tag = NoteTag::with_account_target(pool.id());
+    let registry_tag = NoteTag::with_account_target(registry.id());
+    clients.client.add_note_tag(pool_tag).await?;
+    clients.client.add_note_tag(registry_tag).await?;
+
+    let mut setup = RegistryTestSetup {
+        clients,
+        registry,
+        pool,
+        faucets,
+        user,
+    };
+
+    println!("Funding user wallet if neccessary.");
+
+    setup
+        .maybe_fund_user_wallet(1_000_000_000, 1_000_000)
+        .await?;
+
+    Ok(setup)
+}
+
+static PHASE_NUM: OnceLock<Arc<Mutex<u64>>> = OnceLock::new();
+
+fn get_next_phase_num() -> u64 {
+    let phase_num = PHASE_NUM.get_or_init(|| Arc::new(Mutex::new(0)));
+    let mut phase_num = phase_num.lock().unwrap();
+    *phase_num += 1;
+    *phase_num
+}
+
+pub fn print_phase(description: &str) {
+    let phase_num = get_next_phase_num();
+    println!("\n\t[PHASE {phase_num}] {description}");
 }

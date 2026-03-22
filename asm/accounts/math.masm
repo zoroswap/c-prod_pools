@@ -148,29 +148,25 @@ pub proc safe_add(b: felt, a: felt) -> felt
 end
 
 
+#! retuns 0 if equal, 1 if felt_1 smaller, 2 if felt_1 bigger
+@locals(2)
+pub proc compare_felts(felt_0: felt, felt_1: felt) -> u8
+    # loc.0: felt_0
+    # loc.1: felt_1
+    loc_store.0 loc_store.1
+    # => []
+    loc_load.1 u32split loc_load.0 u32split exec.u64::lt
+    # => [is_felt_0_smaller ]
+    if.true # felt_1 smaller
+        push.1
+    else # if felt_1 is bigger
+        loc_load.1 u32split loc_load.0 u32split exec.u64::gt
+        # => [is_felt_0_bigger ]
+        if.true # felt_0 bigger
+            push.2
+        else # felt_0 and felt_1 are equal
+            push.0
+        end
+    end
 
-#################
-#@locals(5)
-#pub proc get_lp_amount_out(total_supply: felt, amount_0: felt, amount_1: felt, reserve_0: felt, reserve_1: felt) -> felt
-#    # loc.0: total_supply
-#    # loc.1: amount_0
-#    # loc.2: amount_1
-#    # loc.3: reserve_0
-#    # loc.4: reserve_1
-#    loc_store.0
-#    loc_store.1
-#    loc_store.2
-#    loc_store.3
-#    loc_store.4
-#    # => []
-#    # if total_supply == 0
-#    loc_load.0 eq.0
-#    if.true
-#        loc_load.1 loc_load.2 mul sqrt push.MINIMUM_LIQUIDITY safe_sub
-#    else
-#        loc_load.1 u32split loc_load.0 u32split exec.u64::wrapping_mul loc_load.3 u32split exec.u64::div
-#        # => [lp_amount_variant_0_high, lp_amount_variant_0_low]
-#        loc_load.2 u32split loc_load.0 u32split exec.u64::wrapping_mul loc_load.4 u32split exec.u64::div
-#        # => [lp_amount_variant_1_high, lp_amount_variant_1_low, lp_amount_variant_0_high, lp_amount_variant_0_low]
-#    end
-#end
+end
