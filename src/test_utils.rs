@@ -11,8 +11,10 @@ use crate::{
         deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, deploy_xyk_pool, fund_wallet,
         instantiate_simple_client, load_test_state, save_test_state, try_import_account,
     },
-    pool_ops::{build_lp_local_deposit_note, get_lp_local_library},
-    utils::{fetch_vault_for_account_from_chain, get_pool_account_code_commitment, slot_name},
+    pool_ops::{
+        build_lp_local_deposit_note, get_lp_local_library, get_pool_account_code_commitment,
+    },
+    utils::{fetch_vault_for_account_from_chain, slot_name},
 };
 use anyhow::{Result, anyhow};
 use miden_client::{

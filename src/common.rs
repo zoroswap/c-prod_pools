@@ -32,12 +32,10 @@ use crate::pool_ops::build_dummy_register_note;
 use crate::{
     pool_ops::{
         get_combined_pool_library, get_lp_local_fuzz_dummy_library, get_lp_local_library,
-        get_pool_library, get_registry_library, get_storage_utils_library,
+        get_pool_library, get_register_note_root_hash, get_registry_library,
+        get_storage_utils_library,
     },
-    utils::{
-        create_library, extract_full_account, fetch_vault_for_account_from_chain,
-        get_register_note_root_hash, slot_name,
-    },
+    utils::{create_library, extract_full_account, fetch_vault_for_account_from_chain, slot_name},
 };
 
 use miden_client::{Client, rpc::Endpoint};

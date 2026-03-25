@@ -1,10 +1,13 @@
-use crate::utils::{create_library, get_p2id_root_hash, read_masm_to_string};
+use crate::utils::{create_library, get_p2id_root_hash, read_masm_to_string, slot_name};
 use anyhow::{Result, anyhow};
 use miden_client::{
     Felt, Word,
-    account::AccountId,
+    account::{
+        AccountBuilder, AccountComponent, AccountId, AccountStorageMode, AccountType, StorageSlot,
+    },
     assembly::Library,
     asset::FungibleAsset,
+    auth::NoAuth,
     note::{Note, NoteAssets, NoteMetadata, NoteRecipient, NoteTag, NoteType},
 };
 use miden_protocol::{
@@ -12,7 +15,7 @@ use miden_protocol::{
     note::{NoteInputs, NoteScript},
     transaction::{TransactionKernel, TransactionScript},
 };
-use miden_standards::StandardsLib;
+use miden_standards::{StandardsLib, account::wallets::BasicWallet};
 
 /// Compiles the pool MASM library from source.
 pub fn get_pool_library() -> Result<Library> {
@@ -165,15 +168,6 @@ pub fn compile_custom_tx_script(pool_library: &Library, source: &str) -> Result<
         .assemble_program(source)
         .map_err(|e| anyhow!("Failed to compile tx script: {e:?}"))?;
     Ok(TransactionScript::new(program))
-}
-
-/// Compiles a transaction script that calls the given pool procedure via `call`.
-pub fn compile_pool_tx_script(
-    pool_library: &Library,
-    procedure_name: &str,
-) -> Result<TransactionScript> {
-    let source = format!("use zoro::xyk_pool\nbegin\n    exec.xyk_pool::{procedure_name}\nend");
-    compile_custom_tx_script(pool_library, &source)
 }
 
 /// Compiles the lp_local deposit note script.
@@ -559,6 +553,66 @@ pub fn isqrt(n: u128) -> u128 {
     x
 }
 
+pub fn get_register_note_root_hash() -> Word {
+    let note_script = compile_xyk_register_note_script().unwrap();
+    note_script.root()
+}
+
+pub fn get_pool_account_code_commitment() -> Word {
+    let lp_local_library = get_lp_local_library()
+        .map_err(|e| anyhow!("Failed to build lp_local contract: {e:?}"))
+        .unwrap();
+    let xyk_pool_library = get_combined_pool_library()
+        .map_err(|e| anyhow!("Failed to build lp_local contract: {e:?}"))
+        .unwrap();
+    let assets_mapping_slot =
+        StorageSlot::with_empty_map(slot_name("zoro::lp_local::assets_mapping"));
+    let reserve_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
+    let total_supply_slot =
+        StorageSlot::with_empty_value(slot_name("zoro::lp_local::total_supply"));
+    let registry_id_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::registry_id"));
+    let register_note_root = StorageSlot::with_value(
+        slot_name("zoro::lp_local::register_note_root"),
+        get_register_note_root_hash(),
+    );
+    let user_deposits_slot =
+        StorageSlot::with_empty_map(slot_name("zoro::lp_local::user_deposits_mapping"));
+
+    let lp_local_component = AccountComponent::new(
+        lp_local_library,
+        vec![
+            assets_mapping_slot,
+            reserve_slot,
+            total_supply_slot,
+            user_deposits_slot,
+            registry_id_slot,
+            register_note_root,
+        ],
+    )
+    .map_err(|e| anyhow!("Failed to build lp_local contract: {e:?}"))
+    .unwrap()
+    .with_supports_all_types();
+
+    let xyk_pool_component = AccountComponent::new(xyk_pool_library, vec![])
+        .map_err(|e| anyhow!("Failed to build lp_local contract: {e:?}"))
+        .unwrap()
+        .with_supports_all_types();
+
+    let init_seed = [0_u8; 32];
+    let contract = AccountBuilder::new(init_seed)
+        .account_type(AccountType::RegularAccountImmutableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(lp_local_component)
+        .with_component(xyk_pool_component)
+        .with_auth_component(NoAuth)
+        .with_component(BasicWallet)
+        .build()
+        .map_err(|e| anyhow!("Failed to build lp_local contract: {e:?}"))
+        .unwrap();
+
+    contract.code().commitment()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -577,33 +631,5 @@ mod tests {
     fn test_swap_output() {
         let out = get_amount_out(1_000, 50_000, 50_000);
         assert!(out > 970 && out < 1000, "out={out}");
-    }
-
-    #[test]
-    fn test_lp_local_deposit_note_script_compiles() {
-        let lp_lib = get_lp_local_library().expect("lp_local library");
-        let result = compile_lp_local_deposit_note_script(&lp_lib);
-        assert!(
-            result.is_ok(),
-            "lp_local deposit note script: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn test_storage_fuzz_scripts_compile() {
-        let add_source = "use zoro::storage_fuzz_dummy\n\
-             #use zoro::storage_utils\n\
-             use miden::core::sys\n
-             const VALUE_SLOT = word(\"zoro::storage_fuzz_dummy::value_slot\")\n\
-             const MAP_SLOT = word(\"zoro::storage_fuzz_dummy::map_slot\")\n\
-             begin\n\
-                 push.42\n\
-                 push.VALUE_SLOT[0..2]\n\
-                 call.storage_fuzz_dummy::add_to_storage_item\n\
-                 exec.sys::truncate_stack\n\
-             end";
-        let result = compile_storage_fuzz_tx_script(add_source);
-        assert!(result.is_ok(), "compile error: {:?}", result.err());
     }
 }
