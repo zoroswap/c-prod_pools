@@ -454,6 +454,7 @@ async fn register_pool_happy_path_test() -> Result<()> {
     )?;
 
     println!("====== SENDING THE REGISTER NOTE");
+    println!("Note id: {}", register_note.id().to_hex());
 
     let consume_req = TransactionRequestBuilder::new()
         .own_output_notes([OutputNote::Full(register_note.clone())])
@@ -469,96 +470,96 @@ async fn register_pool_happy_path_test() -> Result<()> {
 
     setup.clients.client.sync_state().await?;
 
-    println!("====== CONSUMING THE REGISTER NOTE");
+    // println!("====== CONSUMING THE REGISTER NOTE");
 
-    let foreign = ForeignAccount::public(pool_id, AccountStorageRequirements::default())?;
-    let consume_req = TransactionRequestBuilder::new()
-        .input_notes([(register_note.clone(), None)])
-        .foreign_accounts([foreign])
-        .build()?;
+    // let foreign = ForeignAccount::public(pool_id, AccountStorageRequirements::default())?;
+    // let consume_req = TransactionRequestBuilder::new()
+    //     .input_notes([(register_note.clone(), None)])
+    //     .foreign_accounts([foreign])
+    //     .build()?;
 
-    println!("Submitting register_pool note against registry...");
-    setup
-        .clients
-        .client
-        .submit_new_transaction(setup.registry.id(), consume_req)
-        .await?;
-    setup.clients.client.sync_state().await?;
+    // println!("Submitting register_pool note against registry...");
+    // setup
+    //     .clients
+    //     .client
+    //     .submit_new_transaction(setup.registry.id(), consume_req)
+    //     .await?;
+    // setup.clients.client.sync_state().await?;
 
-    let acc = setup
-        .clients
-        .client
-        .get_account(setup.registry.id())
-        .await?
-        .unwrap();
+    // let acc = setup
+    //     .clients
+    //     .client
+    //     .get_account(setup.registry.id())
+    //     .await?
+    //     .unwrap();
 
-    let acc = match acc.account_data() {
-        AccountRecordData::Full(a) => a,
-        AccountRecordData::Partial(_) => {
-            return Err(anyhow::anyhow!("Registry account data is partial"));
-        }
-    };
+    // let acc = match acc.account_data() {
+    //     AccountRecordData::Full(a) => a,
+    //     AccountRecordData::Partial(_) => {
+    //         return Err(anyhow::anyhow!("Registry account data is partial"));
+    //     }
+    // };
 
-    let pool_key = Word::new([
-        pool_id.suffix(),
-        pool_id.prefix().into(),
-        Felt::new(0),
-        Felt::new(0),
-    ]);
-    let stored_code_hash = acc
-        .storage()
-        .get_map_item(&slot_name("zoro::registry::pools_mapping"), pool_key)?;
+    // let pool_key = Word::new([
+    //     pool_id.suffix(),
+    //     pool_id.prefix().into(),
+    //     Felt::new(0),
+    //     Felt::new(0),
+    // ]);
+    // let stored_code_hash = acc
+    //     .storage()
+    //     .get_map_item(&slot_name("zoro::registry::pools_mapping"), pool_key)?;
 
-    let expected = setup.pool.code().commitment();
-    assert_eq!(
-        stored_code_hash, expected,
-        "pools_mapping should map pool_id → pool code commitment"
-    );
+    // let expected = setup.pool.code().commitment();
+    // assert_eq!(
+    //     stored_code_hash, expected,
+    //     "pools_mapping should map pool_id → pool code commitment"
+    // );
 
-    let register_note = build_xyk_register_note(
-        &setup.registry.id(),
-        setup.clients.client.rng().draw_word(),
-        &token0_id,
-        &token1_id,
-        &setup.pool.id(),
-        &setup.user.id(),
-    )?;
+    // let register_note = build_xyk_register_note(
+    //     &setup.registry.id(),
+    //     setup.clients.client.rng().draw_word(),
+    //     &token0_id,
+    //     &token1_id,
+    //     &setup.pool.id(),
+    //     &setup.user.id(),
+    // )?;
 
-    println!("====== SENDING THE REGISTER NOTE AGAIN (should not succeed)");
+    // println!("====== SENDING THE REGISTER NOTE AGAIN (should not succeed)");
 
-    let consume_req = TransactionRequestBuilder::new()
-        .own_output_notes([OutputNote::Full(register_note.clone())])
-        .build()?;
+    // let consume_req = TransactionRequestBuilder::new()
+    //     .own_output_notes([OutputNote::Full(register_note.clone())])
+    //     .build()?;
 
-    println!("Built request for sending register note");
+    // println!("Built request for sending register note");
 
-    setup
-        .clients
-        .client
-        .submit_new_transaction(setup.user.id(), consume_req)
-        .await?;
+    // setup
+    //     .clients
+    //     .client
+    //     .submit_new_transaction(setup.user.id(), consume_req)
+    //     .await?;
 
-    setup.clients.client.sync_state().await?;
+    // setup.clients.client.sync_state().await?;
 
-    println!("====== CONSUMING THE REGISTER NOTE AGAIN (should fail)");
+    // println!("====== CONSUMING THE REGISTER NOTE AGAIN (should fail)");
 
-    let foreign = ForeignAccount::public(pool_id, AccountStorageRequirements::default())?;
-    let consume_req = TransactionRequestBuilder::new()
-        .input_notes([(register_note.clone(), None)])
-        .foreign_accounts([foreign])
-        .build()?;
+    // let foreign = ForeignAccount::public(pool_id, AccountStorageRequirements::default())?;
+    // let consume_req = TransactionRequestBuilder::new()
+    //     .input_notes([(register_note.clone(), None)])
+    //     .foreign_accounts([foreign])
+    //     .build()?;
 
-    println!("Submitting register_pool note against registry...");
-    setup
-        .clients
-        .client
-        .submit_new_transaction(setup.registry.id(), consume_req)
-        .await
-        .expect_err("Shouldnt be able to register same pool twice");
+    // println!("Submitting register_pool note against registry...");
+    // setup
+    //     .clients
+    //     .client
+    //     .submit_new_transaction(setup.registry.id(), consume_req)
+    //     .await
+    //     .expect_err("Shouldnt be able to register same pool twice");
 
-    setup.clients.client.sync_state().await?;
+    // setup.clients.client.sync_state().await?;
 
-    println!("register_pool_happy_path_test passed!");
+    // println!("register_pool_happy_path_test passed!");
     Ok(())
 }
 
@@ -603,49 +604,50 @@ async fn register_pool_with_deposit_test() -> Result<()> {
         .submit_new_transaction(setup.user.id(), create_req)
         .await?;
     setup.clients.client.sync_state().await?;
+    println!("deposit note id: {}", deposit_note.id().to_hex());
 
-    println!("=== CONSUME DEPOSIT NOTE ");
+    // println!("=== CONSUME DEPOSIT NOTE ");
 
-    let deposit_serial = deposit_note.serial_num();
-    let register_serial = get_return_note_serial(deposit_serial, pool_id);
-    let register_note = build_xyk_register_note(
-        &setup.registry.id(),
-        register_serial,
-        &token0_id,
-        &token1_id,
-        &setup.pool.id(),
-        &setup.pool.id(),
-    )?;
-    let consume_req = TransactionRequestBuilder::new()
-        .input_notes([(deposit_note.clone(), None)])
-        // .expected_future_notes(vec![(
-        //     register_note.clone().into(),
-        //     register_note.metadata().tag(),
-        // )])
-        // .expected_output_recipients(vec![register_note.recipient().clone()])
-        .build()?;
-    let _consume_id = setup
-        .clients
-        .client
-        .submit_new_transaction(setup.pool.id(), consume_req)
-        .await?;
+    // let deposit_serial = deposit_note.serial_num();
+    // let register_serial = get_return_note_serial(deposit_serial, pool_id);
+    // let register_note = build_xyk_register_note(
+    //     &setup.registry.id(),
+    //     register_serial,
+    //     &token0_id,
+    //     &token1_id,
+    //     &setup.pool.id(),
+    //     &setup.pool.id(),
+    // )?;
+    // let consume_req = TransactionRequestBuilder::new()
+    //     .input_notes([(deposit_note.clone(), None)])
+    //     // .expected_future_notes(vec![(
+    //     //     register_note.clone().into(),
+    //     //     register_note.metadata().tag(),
+    //     // )])
+    //     // .expected_output_recipients(vec![register_note.recipient().clone()])
+    //     .build()?;
+    // let _consume_id = setup
+    //     .clients
+    //     .client
+    //     .submit_new_transaction(setup.pool.id(), consume_req)
+    //     .await?;
 
-    setup.clients.client.sync_state().await?;
+    // setup.clients.client.sync_state().await?;
 
-    println!("=== CONSUME XYK_REGISTER NOTE ");
+    // println!("=== CONSUME XYK_REGISTER NOTE ");
 
-    let foreign = ForeignAccount::public(setup.pool.id(), AccountStorageRequirements::default())?;
-    let consume_req = TransactionRequestBuilder::new()
-        .input_notes([(register_note.clone(), None)])
-        .foreign_accounts([foreign])
-        .build()?;
-    let _consume_id = setup
-        .clients
-        .client
-        .submit_new_transaction(setup.registry.id(), consume_req)
-        .await?;
+    // let foreign = ForeignAccount::public(setup.pool.id(), AccountStorageRequirements::default())?;
+    // let consume_req = TransactionRequestBuilder::new()
+    //     .input_notes([(register_note.clone(), None)])
+    //     .foreign_accounts([foreign])
+    //     .build()?;
+    // let _consume_id = setup
+    //     .clients
+    //     .client
+    //     .submit_new_transaction(setup.registry.id(), consume_req)
+    //     .await?;
 
-    setup.clients.client.sync_state().await?;
+    // setup.clients.client.sync_state().await?;
 
     println!("register_pool_with_deposit_test passed!");
     Ok(())

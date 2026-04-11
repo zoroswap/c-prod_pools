@@ -5,7 +5,10 @@ use miden_client::{
     account::AccountId,
     assembly::Library,
     asset::FungibleAsset,
-    note::{Note, NoteAssets, NoteMetadata, NoteRecipient, NoteTag, NoteType},
+    note::{
+        NetworkAccountTarget, Note, NoteAssets, NoteExecutionHint, NoteMetadata, NoteRecipient,
+        NoteTag, NoteType,
+    },
 };
 use miden_protocol::{
     FieldElement,
@@ -225,7 +228,9 @@ pub fn build_lp_local_deposit_note(
     let inputs = NoteInputs::new(vec![user_id.prefix().into(), user_id.suffix()])?;
     let assets = NoteAssets::new(vec![token0_asset.into(), token1_asset.into()])?;
     let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
+    let attachment = NetworkAccountTarget::new(pool_id, NoteExecutionHint::Always)?;
+    let metadata =
+        NoteMetadata::new(sender, NoteType::Public, tag).with_attachment(attachment.into());
     let recipient = NoteRecipient::new(serial_num, script, inputs);
     Ok(Note::new(assets, metadata, recipient))
 }
@@ -381,7 +386,9 @@ pub fn build_xyk_register_note(
     let assets = NoteAssets::new(vec![])?;
     // let tag = NoteTag::with_account_target(*registry_id);
     let tag = NoteTag::new(0);
-    let metadata = NoteMetadata::new(*sender, NoteType::Public, tag);
+    let attachment = NetworkAccountTarget::new(*registry_id, NoteExecutionHint::Always)?;
+    let metadata =
+        NoteMetadata::new(*sender, NoteType::Public, tag).with_attachment(attachment.into());
     let recipient = NoteRecipient::new(serial_num, script.clone(), inputs.clone());
     println!(
         "REGISTER NOTE recipient: {:?}, serial: {:?}, script {:?}, inputs {:?}, tag: {:?}, registry_prefix: {:?}",

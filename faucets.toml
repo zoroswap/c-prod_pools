@@ -4,11 +4,11 @@
 # max_supply = 1_000_000_000_000_000_000
 
 [[faucets]]
-symbol = "ETH"
+symbol = "SPWN"
 decimals = 8
 max_supply = 1_000_000_000_000_000_000
 
 [[faucets]]
-symbol = "USDC"
+symbol = "REGY"
 decimals = 8
 max_supply = 1_000_000_000_000_000_000

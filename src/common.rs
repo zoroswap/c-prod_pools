@@ -362,7 +362,7 @@ pub async fn deploy_combined_pool(
 
     let contract = AccountBuilder::new(init_seed)
         .account_type(AccountType::RegularAccountImmutableCode)
-        .storage_mode(AccountStorageMode::Public)
+        .storage_mode(AccountStorageMode::Network)
         .with_component(lp_local_component)
         .with_component(xyk_pool_component)
         .with_auth_component(NoAuth)
@@ -591,7 +591,7 @@ pub async fn deploy_registry(
 
     let registry = AccountBuilder::new(init_seed)
         .account_type(AccountType::RegularAccountImmutableCode)
-        .storage_mode(AccountStorageMode::Public)
+        .storage_mode(AccountStorageMode::Network)
         .with_component(registry_component)
         // .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
         .with_auth_component(NoAuth)

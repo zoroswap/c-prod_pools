@@ -616,20 +616,19 @@ proc create_register_pool_note()
     # => [registry_accid_prefix, note_type, RECIPIENT]
     # exec.create_account_target
     push.0
-    debug.stack.1
     # => [note_tag, note_type, RECIPIENT]
     exec.output_note::create loc_store.0
     # => []
     # ### add network tx attachment
-    # push.DEFAULT_EXEC_HINT
-    # exec.get_registry_id swap
-    # ## => [target_id_suffix, target_id_prefix, exec_hint]
-    # exec.network_account_target::new
-    # ## => [attachment_scheme, attachment_kind, NOTE_ATTACHMENT]
-    # loc_load.0
-    # ## => [note_id, attachment_scheme, attachment_kind, NOTE_ATTACHMENT]
-    # exec.output_note::set_attachment
-    # # => []
+    push.DEFAULT_EXEC_HINT
+    exec.get_registry_id 
+    ## => [target_id_suffix, target_id_prefix, exec_hint]
+    exec.network_account_target::new
+    ## => [attachment_scheme, attachment_kind, NOTE_ATTACHMENT]
+    loc_load.0
+    ## => [note_id, attachment_scheme, attachment_kind, NOTE_ATTACHMENT]
+    exec.output_note::set_attachment
+    # => []
     exec.sys::truncate_stack
 end
 
