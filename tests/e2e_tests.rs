@@ -15,8 +15,9 @@ use xyk_pool::{
     pool_ops::{
         build_lp_local_deposit_note, build_xyk_register_note,
         build_xyk_swap_exact_tokens_for_tokens_note, build_xyk_swap_tokens_for_exact_tokens_note,
-        get_combined_pool_library, get_lp_local_library,
+        get_combined_pool_library,
     },
+    pool_utils::get_lp_local_library,
     test_utils::*,
     utils::slot_name,
 };
@@ -1053,7 +1054,7 @@ async fn deposit_initial_underflow_test() -> Result<()> {
 
 #[tokio::test]
 async fn smoke_test() -> Result<()> {
-    let mut setup = setup_test_environment().await?;
+    let mut setup = setup_combined_pool_test_environment().await?;
     setup
         .maybe_fund_user_wallet(1_000_000_000, 1_000_000)
         .await?;

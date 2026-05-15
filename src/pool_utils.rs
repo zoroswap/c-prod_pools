@@ -1,7 +1,3 @@
-use crate::pool_utils::{
-    get_lp_local_fuzz_dummy_library, get_lp_local_library, get_math_library, get_registry_library,
-    get_storage_fuzz_dummy_library, get_storage_utils_library,
-};
 use crate::utils::{create_library, get_p2id_root_hash, read_masm_to_string, slot_name};
 use anyhow::{Result, anyhow};
 use miden_client::{
@@ -21,10 +17,128 @@ use miden_protocol::{
 };
 use miden_standards::{StandardsLib, account::wallets::BasicWallet};
 
+/// Compiles the pool MASM library from source.
+pub fn get_pool_library() -> Result<Library> {
+    let math_library = get_math_library()?;
+    let lp_local_library = get_lp_local_library()?;
+    let source = read_masm_to_string("accounts", "xyk_pool")?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(math_library)
+        .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
+        // .with_static_library(storage_utils_library)
+        // .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?
+        .with_static_library(lp_local_library)
+        .map_err(|e| anyhow!("Failed to add lp_local library to assembler: {e:?}"))?;
+    create_library(assembler, "zoro::xyk_pool", &source)
+        .map_err(|e| anyhow!("Failed to compile pool library: {e:?}"))
+}
+
+/// Compiles the math MASM library (sqrt, safe_sub, safe_cast_u64_into_felt, etc.).
+pub fn get_math_library() -> Result<Library> {
+    let source = read_masm_to_string("accounts", "math")?;
+    let assembler = TransactionKernel::assembler().with_warnings_as_errors(true);
+    create_library(assembler, "zoro::math", &source)
+        .map_err(|e| anyhow!("Failed to compile math library: {e:?}"))
+}
+
+/// Compiles the lp_local MASM library (get_lp_amount_out, deposit, withdraw, etc.).
+/// Depends on math and storage_utils libraries.
+pub fn get_lp_local_library() -> Result<Library> {
+    let math_library = get_math_library()?;
+    let storage_utils_library = get_storage_utils_library()?;
+
+    let source = read_masm_to_string("accounts", "lp_local")?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_dynamic_library(StandardsLib::default())
+        .map_err(|e| anyhow!("Failed to add standards library to assembler: {e:?}"))?
+        .with_static_library(math_library)
+        .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
+        .with_static_library(storage_utils_library)
+        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?;
+    create_library(assembler, "zoro::lp_local", &source)
+        .map_err(|e| anyhow!("Failed to compile lp_local library: {e:?}"))
+}
+
+/// Generates the lp_local fuzz dummy library by reading lp_local.masm and transforming it:
+/// - Makes mint and burn public for fuzz testing
+/// - Adds get_user_deposit helper for verification
+fn generate_lp_local_fuzz_dummy_source() -> Result<String> {
+    let source = read_masm_to_string("accounts", "lp_local")?;
+
+    let source = source.replace("proc mint#", "pub proc mint#");
+    let source = source.replace("proc burn#", "pub proc burn#");
+
+    Ok(source)
+}
+
+/// Compiles the lp_local fuzz dummy library (generated from lp_local.masm with public mint/burn).
+pub fn get_lp_local_fuzz_dummy_library() -> Result<Library> {
+    let math_library = get_math_library()?;
+    let storage_utils_library = get_storage_utils_library()?;
+    let source = generate_lp_local_fuzz_dummy_source()?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_dynamic_library(StandardsLib::default())
+        .map_err(|e| anyhow!("Failed to add standards library to assembler: {e:?}"))?
+        .with_static_library(math_library)
+        .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
+        .with_static_library(storage_utils_library)
+        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?;
+    create_library(assembler, "zoro::lp_local", &source)
+        .map_err(|e| anyhow!("Failed to compile lp_local_fuzz_dummy library: {e:?}"))
+}
+
 /// Compiles a transaction script for lp_local mint/burn fuzz tests.
 pub fn compile_lp_local_fuzz_tx_script(source: &str) -> Result<TransactionScript> {
     let lp_local_fuzz_dummy_library = get_lp_local_fuzz_dummy_library()?;
     compile_custom_tx_script(&lp_local_fuzz_dummy_library, source)
+}
+
+/// Compiles the registry MASM library (order_assets, register_pool, etc.).
+/// Depends on math and storage_utils libraries.
+pub fn get_registry_library() -> Result<Library> {
+    let math_library = get_math_library()?;
+    let storage_utils_library = get_storage_utils_library()?;
+    let xyk_pool_library = get_pool_library()?;
+    let source = read_masm_to_string("accounts", "registry")?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(math_library)
+        .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
+        .with_static_library(storage_utils_library)
+        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?
+        .with_static_library(xyk_pool_library)
+        .map_err(|e| anyhow!("Failed to add xyk_pool library to assembler: {e:?}"))?;
+    create_library(assembler, "zoro::registry", &source)
+        .map_err(|e| anyhow!("Failed to compile registry library: {e:?}"))
+}
+
+/// Compiles the storage_utils MASM library (add_to_storage_item, add_to_map_item, set_map_item).
+/// Depends on the math library.
+pub fn get_storage_utils_library() -> Result<Library> {
+    let math_library = get_math_library()?;
+    let source = read_masm_to_string("accounts", "storage_utils")?;
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(math_library)
+        .unwrap_or_else(|e| panic!("Failed to add math library to assembler: {e:?}"));
+    create_library(assembler, "zoro::storage_utils", &source)
+        .map_err(|e| anyhow!("Failed to compile storage_utils library: {e:?}"))
+}
+
+/// Compiles the storage_fuzz_dummy MASM library (minimal dummy with slot constants).
+pub fn get_storage_fuzz_dummy_library() -> Result<Library> {
+    let storage_utils_library = get_storage_utils_library()?;
+    let source = read_masm_to_string("accounts", "storage_fuzz_dummy")?;
+
+    let assembler = TransactionKernel::assembler()
+        .with_warnings_as_errors(true)
+        .with_static_library(storage_utils_library)
+        .unwrap_or_else(|e| panic!("Failed to add storage_utils library to assembler: {e:?}"));
+    create_library(assembler, "zoro::storage_fuzz_dummy", &source)
+        .map_err(|e| anyhow!("Failed to compile storage_fuzz_dummy library: {e:?}"))
 }
 
 /// Compiles a transaction script for storage fuzz tests.

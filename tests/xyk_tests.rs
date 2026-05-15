@@ -1,9 +1,8 @@
 use anyhow::Result;
 use miden_client::{Felt, transaction::AdviceInputs};
 use xyk_pool::{
-    pool_ops::{
-        compile_custom_tx_script, get_math_library, get_pool_library, get_registry_library, isqrt,
-    },
+    pool_ops::{compile_custom_tx_script, isqrt},
+    pool_utils::{get_math_library, get_pool_library, get_registry_library},
     test_utils::*,
     utils::order_assets_as_felts,
 };

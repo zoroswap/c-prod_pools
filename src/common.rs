@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::{fs, path::PathBuf, time::Duration};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use miden_client::auth::NoAuth;
 use miden_client::note::NoteTag;
 use miden_client::{
@@ -10,14 +10,13 @@ use miden_client::{
         Account, AccountBuilder, AccountId, AccountStorageMode, AccountType, StorageMap,
         StorageSlot,
     },
-    asset::{FungibleAsset, TokenSymbol},
+    asset::TokenSymbol,
     auth::{AuthFalcon512Rpo, AuthSecretKey},
     builder::ClientBuilder,
     crypto::FeltRng,
     keystore::FilesystemKeyStore,
-    note::{Note, NoteError, NoteType},
+    note::{Note, NoteError},
     rpc::GrpcClient,
-    store::TransactionFilter,
     transaction::{OutputNote, TransactionRequestBuilder},
 };
 use miden_client_sqlite_store::ClientBuilderSqliteExt;
@@ -30,12 +29,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::pool_ops::build_dummy_register_note;
 use crate::{
-    pool_ops::{
-        get_combined_pool_library, get_lp_local_fuzz_dummy_library, get_lp_local_library,
-        get_pool_library, get_register_note_root_hash, get_registry_library,
+    pool_ops::{get_combined_pool_library, get_register_note_root_hash},
+    pool_utils::{
+        get_lp_local_fuzz_dummy_library, get_lp_local_library, get_registry_library,
         get_storage_utils_library,
     },
-    utils::{create_library, extract_full_account, fetch_vault_for_account_from_chain, slot_name},
+    utils::{create_library, extract_full_account, slot_name},
 };
 
 use miden_client::{Client, rpc::Endpoint};
@@ -106,79 +105,6 @@ pub async fn create_basic_account(
     touch_account(client, &account).await.unwrap();
 
     Ok((account, key_pair))
-}
-
-/// Deploys a constant-product pool account configured for the given token pair.
-///
-/// Storage slots:
-///   - `reserve`:   [reserve0, reserve1, total_lp, 0]  (initially empty)
-///   - `config`:    [token0_prefix, token0_suffix, token1_prefix, token1_suffix]
-///   - `lp_shares`: StorageMap (initially empty)
-pub async fn deploy_xyk_pool(
-    client: &mut MidenClient,
-    keystore: FilesystemKeyStore,
-    token0_id: &AccountId,
-    token1_id: &AccountId,
-) -> Result<(Account, AuthSecretKey), ClientError> {
-    let sync_summary = client.sync_state().await?;
-    println!("\nLatest block: {}", sync_summary.block_num);
-    println!("\n[STEP 1] Create xyk_pool account");
-
-    // let pool_code = read_masm_to_string("accounts", "xyk_pool")
-    //     .unwrap_or_else(|e| panic!("Failed to read xyk_pool code: {e:?}"));
-
-    // let assembler = TransactionKernel::assembler(); //.with_warnings_as_errors(true);
-
-    let reserves = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));
-    let pool_assets: Word = [
-        token0_id.prefix().as_felt(),
-        token0_id.suffix(),
-        token1_id.prefix().as_felt(),
-        token1_id.suffix(),
-    ]
-    .into();
-    let assets_mapping =
-        StorageSlot::with_value(slot_name("zoro::lp_local::assets_mapping"), pool_assets);
-
-    // let xyk_pool_library = create_library(assembler.clone(), "zoro::xyk_pool", &pool_code)
-    //     .map_err(|e| anyhow!("Failed to create pool library: {e:?}"))
-    //     .unwrap();
-    let xyk_pool_library = get_pool_library().unwrap();
-    let xyk_pool_component =
-        AccountComponent::new(xyk_pool_library, vec![reserves, assets_mapping])?
-            .with_supports_all_types();
-
-    let mut init_seed = [0_u8; 32];
-    client.rng().fill_bytes(&mut init_seed);
-
-    let key_pair = AuthSecretKey::new_falcon512_rpo_with_rng(client.rng());
-
-    let xyk_pool_contract = AccountBuilder::new(init_seed)
-        .account_type(AccountType::RegularAccountUpdatableCode)
-        .storage_mode(AccountStorageMode::Public)
-        .with_component(xyk_pool_component.clone())
-        .with_auth_component(AuthFalcon512Rpo::new(key_pair.public_key().to_commitment()))
-        .with_component(BasicWallet)
-        .build()?;
-
-    println!(
-        "pool contract commitment hash: {:?}",
-        xyk_pool_contract.commitment().to_hex()
-    );
-    println!(
-        "pool config: token0={}, token1={}",
-        token0_id.to_hex(),
-        token1_id.to_hex(),
-    );
-
-    keystore.add_key(&key_pair).unwrap();
-    client
-        .add_account(&xyk_pool_contract.clone(), false)
-        .await?;
-    client.sync_state().await?;
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    Ok((xyk_pool_contract, key_pair))
 }
 
 /// Deploys an lp_local pool account for the given token pair.
@@ -275,7 +201,7 @@ pub async fn deploy_lp_local_pool(
 ///   - `reserve`: [reserve0, reserve1, 0, 0]
 ///   - `total_supply`: [total_lp, 0, 0, 0]
 ///   - `user_deposits_mapping`: map slot
-pub async fn deploy_combined_pool(
+pub async fn deploy_xyk_pool(
     client: &mut MidenClient,
     keystore: FilesystemKeyStore,
     token0_id: &AccountId,
@@ -794,62 +720,6 @@ pub async fn deploy_simple_faucets_from_config(
 
     println!("All faucets deployed successfully.");
     Ok(accounts)
-}
-
-pub async fn fund_wallet(
-    clients: &mut MidenClients,
-    account: &Account,
-    asset: &FaucetConfig,
-    asset_id: &AccountId,
-    amount: u64,
-) -> Result<()> {
-    let client = &mut clients.client;
-    let amount: u64 = if amount > 0 {
-        amount
-    } else {
-        5 * 10u64.pow(asset.decimals as u32 - 2)
-    }; // 0.05
-    let fungible_asset = FungibleAsset::new(asset_id.clone(), amount)?;
-    client.import_account_by_id(asset_id.clone()).await?;
-    let transaction_request = TransactionRequestBuilder::new().build_mint_fungible_asset(
-        fungible_asset,
-        account.id(),
-        NoteType::Public,
-        client.rng(),
-    )?;
-    let tx_id = client
-        .submit_new_transaction(asset_id.clone(), transaction_request)
-        .await?;
-    println!("Minted {amount} {} for the user.", asset.symbol);
-    client.sync_state().await?;
-
-    let transaction = client
-        .get_transactions(TransactionFilter::Ids(vec![tx_id]))
-        .await?
-        .pop()
-        .with_context(|| "failed to find transaction {tx_id:?} after submission")
-        .unwrap();
-    let minted_note = match transaction.details.output_notes.get_note(0) {
-        OutputNote::Full(n) => n.clone(),
-        _ => panic!("Expected OutputNote::Full, got something else"),
-    };
-
-    wait_for_note(client, &minted_note).await?;
-
-    let consume_req = TransactionRequestBuilder::new()
-        .input_notes([(minted_note, None)])
-        .build()
-        .unwrap();
-
-    let _tx_id = client
-        .submit_new_transaction(account.id(), consume_req)
-        .await?;
-    client.sync_state().await?;
-    let new_balance_user = fetch_vault_for_account_from_chain(&clients.rpc_api, asset_id).await?;
-    println!("New account vault: {:?}", new_balance_user);
-    println!("User successfully consumed p2id note into its wallet");
-
-    Ok(())
 }
 
 /// Waits for a specific note to become consumable.

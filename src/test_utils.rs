@@ -7,25 +7,25 @@ use std::{
 use crate::{
     common::{
         CachedFaucet, CachedTestState, Faucet, FaucetConfig, MidenClients, create_basic_account,
-        deploy_combined_pool, deploy_lp_local_fuzz_dummy, deploy_lp_local_pool, deploy_registry,
-        deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, deploy_xyk_pool, fund_wallet,
+        deploy_lp_local_fuzz_dummy, deploy_lp_local_pool, deploy_registry,
+        deploy_simple_faucets_from_config, deploy_storage_fuzz_dummy, deploy_xyk_pool,
         instantiate_simple_client, load_test_state, save_test_state, try_import_account,
+        wait_for_note,
     },
-    pool_ops::{
-        build_lp_local_deposit_note, get_lp_local_library, get_pool_account_code_commitment,
-    },
+    pool_ops::{build_lp_local_deposit_note, get_pool_account_code_commitment},
+    pool_utils::get_lp_local_library,
     utils::{fetch_vault_for_account_from_chain, slot_name},
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use miden_client::{
     Felt,
     account::{Account, AccountId},
     asset::FungibleAsset,
     crypto::FeltRng,
     keystore::FilesystemKeyStore,
-    note::NoteTag,
+    note::{NoteTag, NoteType},
     rpc::Endpoint,
-    store::AccountRecordData,
+    store::{AccountRecordData, TransactionFilter},
     transaction::{OutputNote, TransactionRequestBuilder},
 };
 
@@ -364,47 +364,6 @@ pub async fn setup_lightweight_environment() -> Result<TestSetup> {
     })
 }
 
-/// Full xyk_pool setup: faucets, user, pool contract, funding.
-pub async fn setup_test_environment() -> Result<TestSetup> {
-    dotenv::dotenv().ok();
-    let (label, endpoint) = resolve_endpoint();
-    let base_dir = PathBuf::from("tmp").join(&label);
-    fs::create_dir_all(&base_dir)?;
-
-    let (mut clients, keystore) = init_clients(&base_dir, &endpoint).await?;
-    let (faucets, user, is_user_fresh) =
-        resolve_faucets_and_user(&mut clients, &keystore, &base_dir).await?;
-
-    let token0_id = faucets[0].faucet.id();
-    let token1_id = faucets[1].faucet.id();
-    let (pool, _) = deploy_xyk_pool(
-        &mut clients.client,
-        keystore.clone(),
-        &token0_id,
-        &token1_id,
-    )
-    .await?;
-    println!(
-        "Created C Prod Pool Account => ID: {:?} {:?}",
-        pool.id().to_bech32(endpoint.to_network_id()),
-        pool.id().to_hex()
-    );
-
-    let mut setup = TestSetup {
-        clients,
-        user,
-        contract: pool,
-        faucets,
-    };
-
-    if is_user_fresh {
-        println!("Funding user wallet...");
-        setup.fund_user_wallet(DEFAULT_FUND_AMOUNT).await?;
-    }
-
-    Ok(setup)
-}
-
 /// Storage utils fuzz setup: client + storage_fuzz_dummy contract.
 pub async fn setup_storage_fuzz_environment(
     initial_value: u64,
@@ -513,7 +472,7 @@ pub async fn setup_combined_pool_test_environment() -> Result<TestSetup> {
     )
     .await?;
 
-    let (combined_pool, _) = deploy_combined_pool(
+    let (combined_pool, _) = deploy_xyk_pool(
         &mut clients.client,
         keystore.clone(),
         &token0_id,
@@ -601,7 +560,7 @@ pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
 
     println!("====== REGISTRY DEPLOYED");
 
-    let (pool, _) = deploy_combined_pool(
+    let (pool, _) = deploy_xyk_pool(
         &mut clients.client,
         keystore.clone(),
         &token0_id,
@@ -653,4 +612,60 @@ fn get_next_phase_num() -> u64 {
 pub fn print_phase(description: &str) {
     let phase_num = get_next_phase_num();
     println!("\n\t[PHASE {phase_num}] {description}");
+}
+
+pub async fn fund_wallet(
+    clients: &mut MidenClients,
+    account: &Account,
+    asset: &FaucetConfig,
+    asset_id: &AccountId,
+    amount: u64,
+) -> Result<()> {
+    let client = &mut clients.client;
+    let amount: u64 = if amount > 0 {
+        amount
+    } else {
+        5 * 10u64.pow(asset.decimals as u32 - 2)
+    }; // 0.05
+    let fungible_asset = FungibleAsset::new(asset_id.clone(), amount)?;
+    client.import_account_by_id(asset_id.clone()).await?;
+    let transaction_request = TransactionRequestBuilder::new().build_mint_fungible_asset(
+        fungible_asset,
+        account.id(),
+        NoteType::Public,
+        client.rng(),
+    )?;
+    let tx_id = client
+        .submit_new_transaction(asset_id.clone(), transaction_request)
+        .await?;
+    println!("Minted {amount} {} for the user.", asset.symbol);
+    client.sync_state().await?;
+
+    let transaction = client
+        .get_transactions(TransactionFilter::Ids(vec![tx_id]))
+        .await?
+        .pop()
+        .with_context(|| "failed to find transaction {tx_id:?} after submission")
+        .unwrap();
+    let minted_note = match transaction.details.output_notes.get_note(0) {
+        OutputNote::Full(n) => n.clone(),
+        _ => panic!("Expected OutputNote::Full, got something else"),
+    };
+
+    wait_for_note(client, &minted_note).await?;
+
+    let consume_req = TransactionRequestBuilder::new()
+        .input_notes([(minted_note, None)])
+        .build()
+        .unwrap();
+
+    let _tx_id = client
+        .submit_new_transaction(account.id(), consume_req)
+        .await?;
+    client.sync_state().await?;
+    let new_balance_user = fetch_vault_for_account_from_chain(&clients.rpc_api, asset_id).await?;
+    println!("New account vault: {:?}", new_balance_user);
+    println!("User successfully consumed p2id note into its wallet");
+
+    Ok(())
 }

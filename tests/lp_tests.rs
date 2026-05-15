@@ -7,8 +7,9 @@ use miden_client::{
 use xyk_pool::{
     pool_ops::{
         compile_custom_tx_script, compile_lp_local_fuzz_tx_script, compute_expected_lp,
-        compute_expected_withdraw, get_lp_local_library,
+        compute_expected_withdraw,
     },
+    pool_utils::get_lp_local_library,
     test_utils::*,
     utils::slot_name,
 };
