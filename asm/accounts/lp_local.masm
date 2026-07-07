@@ -1,5 +1,4 @@
 use miden::core::math::u64
-use miden::core::crypto::hashes::rpo256
 use miden::protocol::note
 use miden::protocol::native_account
 use miden::protocol::active_note
@@ -11,6 +10,7 @@ use miden::standards::attachments::network_account_target
 
 use zoro::math
 use zoro::storage_utils
+use zoro::asset_utils
 
 pub const DEFAULT_TAG = 0
 pub const DEFAULT_EXEC_HINT = 1
@@ -148,18 +148,22 @@ end
 
 pub proc total_supply#() -> felt
     push.TOTAL_SUPPLY_SLOT[0..2] exec.active_account::get_item
-    drop drop drop
+    movdn.3 drop drop drop
     exec.sys::truncate_stack
 end
 
 pub proc get_reserves#() -> (felt, felt)
     push.RESERVE_SLOT[0..2] exec.active_account::get_item
-    drop drop
+    # => [reserve_0, reserve_1, 0, 0]
+    movdn.3 movdn.3 drop drop
+    # => [reserve_0, reserve_1]
 end
 
 pub proc set_reserves(reserve_0: felt, reserve_1: felt)
     ### amount validation vs vault
-    push.0.0 push.RESERVE_SLOT[0..2] exec.native_account::set_item
+    push.0.0 movup.3 movup.3
+    # => [reserve_0, reserve_1, 0, 0] == [VALUE]
+    push.RESERVE_SLOT[0..2] exec.native_account::set_item
     dropw
 end
 
@@ -170,7 +174,9 @@ end
 
 pub proc get_registry_id() -> (felt, felt)
     push.REGISTRY_ID_SLOT[0..2] exec.active_account::get_item
-    drop drop
+    # => [registry_id_prefix, registry_id_suffix, 0, 0]
+    movdn.3 movdn.3 drop drop
+    # => [registry_id_prefix, registry_id_suffix]
     exec.sys::truncate_stack
 end
 
@@ -179,7 +185,7 @@ end
 pub proc get_user_deposit#(prefix: felt, suffix: felt) -> felt
     exec.get_user_deposit_key
     push.USER_DEPOSITS_MAPPING_SLOT[0..2] exec.active_account::get_map_item
-    drop drop drop
+    movdn.3 drop drop drop
     exec.sys::truncate_stack
 end
 
@@ -445,8 +451,8 @@ pub proc deposit
     ### reserve needs to be updated 
     #padw padw padw loc_loadw_be.0 exec.receive_asset
     #padw padw padw loc_loadw_be.4 exec.receive_asset
-    padw loc_loadw_le.0 exec.native_account::add_asset dropw    
-    padw loc_loadw_le.4 exec.native_account::add_asset dropw
+    padw loc_loadw_le.0 exec.asset_utils::expand_asset exec.native_account::add_asset dropw    
+    padw loc_loadw_le.4 exec.asset_utils::expand_asset exec.native_account::add_asset dropw
     ## make sure asset order correct
     loc_load.7 loc_load.3
     # => [amount_0, amount_1]
@@ -523,12 +529,14 @@ proc mem_get_note_type() -> felt
 end
 
 
-@locals(8)
+@locals(13)
 proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     # loc.0: amount_0_out
     # loc.1: amount_1_out
     # loc.3: asset_0_id_prefix
     # loc.4: asset_0_id_suffix
+    # loc.8: ASSET_OUT
+    # loc.12: note_id
  
     loc_store.0 loc_store.1
     ##### compute recipient hash
@@ -540,36 +548,34 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
 #
     push.2 push.0
     ## => [inputs_ptr, number_of_inputs, WITHDRAW_SERIAL_NUM, OUTPUT_NOTE_ROOT_HASH]
-    exec.note::build_recipient
+    exec.note::compute_and_store_recipient
     # => [RECIPIENT]
     mem_load.NOTE_TYPE mem_load.NOTE_TAG
     # => [note_type, note_tag, RECIPIENT]
     exec.output_note::create
     # => [note_id]
-    loc_store.2
-    # => []
+    dup loc_store.12
+    # => [note_id]
     ### get assets ids
     push.0.0.0.0 push.ASSETS_MAPPING_SLOT[0..2] exec.active_account::get_map_item
     # => [asset_0_id_prefix, asset_0_id_suffix, asset_1_id_prefix, asset_1_id_suffix]
     loc_store.3 loc_store.4
-    push.0 movdn.2 loc_load.1 movdn.3 
-    # => [ASSET1_OUT]
-    exec.native_account::remove_asset 
-    # => [ASSET1_uOUT]
-    loc_load.2 movdn.4
-    # => [ASSET1_OUT, note_id]
+    push.0 movdn.2 loc_load.1 movdn.3
+    loc_storew_le.8 exec.asset_utils::expand_asset
+    exec.native_account::remove_asset
+    loc_loadw_le.8 exec.asset_utils::expand_asset
     exec.output_note::add_asset
-    # => []
     loc_load.0
     # => [asset_0_out]
     push.0 loc_load.4 loc_load.3
-    # => [ASSET0_OUT]
-    exec.native_account::remove_asset 
-    # => [ASSET0_OUT]
-    loc_load.2 movdn.4
-    # => [ASSET0_OUT, note_id]
+    # => [ASSET_0_OUT]
+    loc_store_le.8
+    # => [ASSET_0_OUT]
+    exec.asset_utils::expand_asset
+    exec.native_account::remove_asset
+    loc_loadw_le.8 exec.asset_utils::expand_asset
+    loc_load.12 movdn.8
     exec.output_note::add_asset
-    # => []
 end
 
 
@@ -608,7 +614,7 @@ proc create_register_pool_note()
     push.8
     push.OUTPUT_NOTE_INPUTS_START
     ## => [inputs_ptr, number_of_inputs, REGISTER_SERIAL_NUM, REGISTER_NOTE_ROOT]
-    exec.note::build_recipient
+    exec.note::compute_and_store_recipient
     # => [RECIPIENT]
     push.1
     # => [note_type, RECIPIENT]
@@ -616,7 +622,6 @@ proc create_register_pool_note()
     # => [registry_accid_prefix, note_type, RECIPIENT]
     # exec.create_account_target
     push.0
-    debug.stack.1
     # => [note_tag, note_type, RECIPIENT]
     exec.output_note::create loc_store.0
     # => []

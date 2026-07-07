@@ -8,7 +8,7 @@ use xyk_pool::{
     utils::order_assets_as_felts,
 };
 
-use std::{collections::BTreeSet, time::Duration};
+use std::{collections::BTreeMap, time::Duration};
 
 #[tokio::test]
 async fn get_amount_out_u64_fuzz_test() -> Result<()> {
@@ -26,9 +26,9 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
     let mut rng = rand::rng();
 
     for i in 0..iterations {
-        let reserve_in = Felt::new(rng.random_range(min_reserve..=max_reserve));
-        let reserve_out = Felt::new(rng.random_range(min_reserve..=max_reserve));
-        let amount_in = Felt::new(rng.random_range(min_amount_in..=max_amount_in));
+        let reserve_in = Felt::new(rng.random_range(min_reserve..=max_reserve)).unwrap();
+        let reserve_out = Felt::new(rng.random_range(min_reserve..=max_reserve)).unwrap();
+        let amount_in = Felt::new(rng.random_range(min_amount_in..=max_amount_in)).unwrap();
 
         let source = format!(
             "use zoro::xyk_pool\n\
@@ -49,7 +49,7 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
                 setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
-                BTreeSet::new(),
+                BTreeMap::new(),
             )
             .await?;
 
@@ -59,11 +59,11 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
             "[{}/{}] reserve_in={}, reserve_out={}, amount_in={} => got={}, expected={}",
             i + 1,
             iterations,
-            reserve_in.as_int(),
-            reserve_out.as_int(),
-            amount_in.as_int(),
-            stack[0].as_int(),
-            expected.as_int(),
+            reserve_in.as_canonical_u64(),
+            reserve_out.as_canonical_u64(),
+            amount_in.as_canonical_u64(),
+            stack[0].as_canonical_u64(),
+            expected.as_canonical_u64(),
         );
 
         assert_eq!(
@@ -71,9 +71,9 @@ async fn get_amount_out_u64_fuzz_test() -> Result<()> {
             expected,
             "Mismatch at iteration {}: reserve_in={}, reserve_out={}, amount_in={}",
             i + 1,
-            reserve_in.as_int(),
-            reserve_out.as_int(),
-            amount_in.as_int(),
+            reserve_in.as_canonical_u64(),
+            reserve_out.as_canonical_u64(),
+            amount_in.as_canonical_u64(),
         );
 
         // let tx_request = TransactionRequestBuilder::new()
@@ -105,9 +105,9 @@ async fn quote_fuzz_test() -> Result<()> {
     let mut rng = rand::rng();
 
     for i in 0..iterations {
-        let reserve_a = Felt::new(rng.random_range(min_reserve..=max_reserve));
-        let reserve_b = Felt::new(rng.random_range(min_reserve..=max_reserve));
-        let amount_a = Felt::new(rng.random_range(min_amount..=max_amount));
+        let reserve_a = Felt::new(rng.random_range(min_reserve..=max_reserve)).unwrap();
+        let reserve_b = Felt::new(rng.random_range(min_reserve..=max_reserve)).unwrap();
+        let amount_a = Felt::new(rng.random_range(min_amount..=max_amount)).unwrap();
 
         let source = format!(
             "use zoro::xyk_pool\n\
@@ -127,7 +127,7 @@ async fn quote_fuzz_test() -> Result<()> {
                 setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
-                BTreeSet::new(),
+                BTreeMap::new(),
             )
             .await?;
 
@@ -136,20 +136,20 @@ async fn quote_fuzz_test() -> Result<()> {
             "[{}/{}] amount_a={}, reserve_a={}, reserve_b={} => got={}, expected={}",
             i + 1,
             iterations,
-            amount_a.as_int(),
-            reserve_a.as_int(),
-            reserve_b.as_int(),
-            stack[0].as_int(),
-            expected.as_int(),
+            amount_a.as_canonical_u64(),
+            reserve_a.as_canonical_u64(),
+            reserve_b.as_canonical_u64(),
+            stack[0].as_canonical_u64(),
+            expected.as_canonical_u64(),
         );
         assert_eq!(
             stack[0],
             expected,
             "Mismatch at iteration {}: amount_a={}, reserve_a={}, reserve_b={}",
             i + 1,
-            amount_a.as_int(),
-            reserve_a.as_int(),
-            reserve_b.as_int(),
+            amount_a.as_canonical_u64(),
+            reserve_a.as_canonical_u64(),
+            reserve_b.as_canonical_u64(),
         );
     }
 
@@ -174,9 +174,9 @@ async fn get_amount_in_u64_fuzz_test() -> Result<()> {
     let mut rng = rand::rng();
 
     for i in 0..iterations {
-        let reserve_in = Felt::new(rng.random_range(min_reserve..=max_reserve));
-        let reserve_out = Felt::new(rng.random_range(min_reserve..=max_reserve));
-        let amount_out = Felt::new(rng.random_range(min_amount_out..=max_amount_out));
+        let reserve_in = Felt::new(rng.random_range(min_reserve..=max_reserve)).unwrap();
+        let reserve_out = Felt::new(rng.random_range(min_reserve..=max_reserve)).unwrap();
+        let amount_out = Felt::new(rng.random_range(min_amount_out..=max_amount_out)).unwrap();
 
         let source = format!(
             "use zoro::xyk_pool\n\
@@ -197,7 +197,7 @@ async fn get_amount_in_u64_fuzz_test() -> Result<()> {
                 setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
-                BTreeSet::new(),
+                BTreeMap::new(),
             )
             .await?;
 
@@ -207,11 +207,11 @@ async fn get_amount_in_u64_fuzz_test() -> Result<()> {
             "[{}/{}] reserve_in={}, reserve_out={}, amount_out={} => got={}, expected={}",
             i + 1,
             iterations,
-            reserve_in.as_int(),
-            reserve_out.as_int(),
-            amount_out.as_int(),
-            stack[0].as_int(),
-            expected.as_int(),
+            reserve_in.as_canonical_u64(),
+            reserve_out.as_canonical_u64(),
+            amount_out.as_canonical_u64(),
+            stack[0].as_canonical_u64(),
+            expected.as_canonical_u64(),
         );
 
         assert_eq!(
@@ -219,9 +219,9 @@ async fn get_amount_in_u64_fuzz_test() -> Result<()> {
             expected,
             "Mismatch at iteration {}: reserve_in={}, reserve_out={}, amount_out={}",
             i + 1,
-            reserve_in.as_int(),
-            reserve_out.as_int(),
-            amount_out.as_int(),
+            reserve_in.as_canonical_u64(),
+            reserve_out.as_canonical_u64(),
+            amount_out.as_canonical_u64(),
         );
 
         // let tx_request = TransactionRequestBuilder::new()
@@ -276,11 +276,11 @@ async fn sqrt_u32_fuzz_test() -> Result<()> {
                 setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
-                BTreeSet::new(),
+                BTreeMap::new(),
             )
             .await?;
 
-        let got = stack[0].as_int();
+        let got = stack[0].as_canonical_u64();
         let expected = isqrt(n as u128) as u64;
 
         println!("[{}] n={} => got={}, expected={}", i + 1, n, got, expected,);
@@ -365,11 +365,11 @@ async fn sqrt_felt_fuzz_test() -> Result<()> {
                 setup.contract.id(),
                 script.clone(),
                 AdviceInputs::default(),
-                BTreeSet::new(),
+                BTreeMap::new(),
             )
             .await?;
 
-        let got = stack[0].as_int();
+        let got = stack[0].as_canonical_u64();
         let expected = isqrt(n as u128) as u64;
 
         println!("[{}] n={} => got={}, expected={}", i + 1, n, got, expected);
@@ -446,28 +446,28 @@ async fn order_assets_fuzz_test() -> Result<()> {
                 setup.contract.id(),
                 script,
                 AdviceInputs::default(),
-                BTreeSet::new(),
+                BTreeMap::new(),
             )
             .await?;
 
         let (exp_lo_pfx, exp_lo_sfx, exp_hi_pfx, exp_hi_sfx) = order_assets_as_felts(
-            Felt::new(a0_pfx),
-            Felt::new(a0_sfx),
-            Felt::new(a1_pfx),
-            Felt::new(a1_sfx),
+            Felt::new(a0_pfx)?,
+            Felt::new(a0_sfx)?,
+            Felt::new(a1_pfx)?,
+            Felt::new(a1_sfx)?,
         )?;
 
         let got = (
-            stack[0].as_int(),
-            stack[1].as_int(),
-            stack[2].as_int(),
-            stack[3].as_int(),
+            stack[0].as_canonical_u64(),
+            stack[1].as_canonical_u64(),
+            stack[2].as_canonical_u64(),
+            stack[3].as_canonical_u64(),
         );
         let expected = (
-            exp_lo_pfx.as_int(),
-            exp_lo_sfx.as_int(),
-            exp_hi_pfx.as_int(),
-            exp_hi_sfx.as_int(),
+            exp_lo_pfx.as_canonical_u64(),
+            exp_lo_sfx.as_canonical_u64(),
+            exp_hi_pfx.as_canonical_u64(),
+            exp_hi_sfx.as_canonical_u64(),
         );
 
         println!(
@@ -528,7 +528,7 @@ async fn order_assets_same_asset_fails_test() -> Result<()> {
             setup.contract.id(),
             script,
             AdviceInputs::default(),
-            BTreeSet::new(),
+            BTreeMap::new(),
         )
         .await;
 

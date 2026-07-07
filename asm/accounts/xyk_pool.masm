@@ -13,6 +13,7 @@ use miden::protocol::account_id
 use zoro::math
 #use zoro::storage_utils
 use zoro::lp_local
+use zoro::asset_utils
 
 #use lp_local::set_reserves
 pub use lp_local::get_pool_asset_ids
@@ -211,6 +212,7 @@ pub proc swap_exact_tokens_for_tokens(note_serial: word, user_id_prefix: felt, u
         mem_storew_le.RETURN_NOTE_ASSET_WORD dropw
         ### add ASSEET IN to the pool
         padw mem_loadw_le.ASSET_IN_WORD
+        exec.asset_utils::expand_asset
         exec.native_account::add_asset dropw
         # => []
         ### update reserve
@@ -246,11 +248,14 @@ pub proc swap_tokens_for_exact_tokens(user_id_prefix: felt, user_id_suffix: felt
  
     # store user account id
     mem_storew_le.INPUT_NOTE_SERIAL dropw
-
     # store user account id
     mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
-
     ### mem store asset in, min asset out
+    ### ASSET_OUT arrives from the note as [prefix, suffix, 0, amount]; normalize the
+    ### first two elements to [suffix, prefix, ...] to match the compress_asset/expand_asset
+    ### convention used everywhere else (ASSET_IN, RETURN_NOTE_ASSET_WORD, reserve lookups).
+    # @todo fix this shit
+    swap
     mem_storew_le.ASSET_OUT_WORD dropw mem_storew_le.ASSET_IN_WORD dropw
 
     ### store note metadata in memory
@@ -282,6 +287,7 @@ pub proc swap_tokens_for_exact_tokens(user_id_prefix: felt, user_id_suffix: felt
         mem_storew_le.RETURN_NOTE_ASSET_WORD dropw
         ### add ASSEET IN to the pool
         padw mem_loadw_le.ASSET_IN_WORD
+        exec.asset_utils::expand_asset
         exec.native_account::add_asset dropw
         # => []
         ### update reserve
@@ -301,16 +307,24 @@ pub proc swap_tokens_for_exact_tokens(user_id_prefix: felt, user_id_suffix: felt
     end
     exec._create_p2id_note
     # => [note_id]
-    ### add remaining amount in to the note to be returned to the user
-    padw mem_loadw_le.ASSET_IN_WORD
-    # => [ASSET_IN, note_id]
-    loc_load.2
-    # => [remaining_amount_in, ASSET_IN, note_id]
-    swap.4 drop
-    # => [REMAINING_ASSET_IN, note_id]
-    exec.output_note::add_asset
-    # => [note_id]
-    drop
+    ### add remaining amount in to the note to be returned to the user if any
+    loc_load.2 
+     # => [remaining_amount_in, note_id]
+    gt.0 if.true
+        padw mem_loadw_le.ASSET_IN_WORD
+        # => [ASSET_IN, note_id]
+        loc_load.2
+        # => [remaining_amount_in, ASSET_IN, note_id]
+        swap.4 drop
+        exec.asset_utils::expand_asset
+        exec.output_note::add_asset
+        # => [note_id]
+        drop
+    else
+        # => [note_id]
+        drop
+    end
+       
 end
 
 proc compute_return_note_serial_num() -> word
@@ -321,6 +335,7 @@ proc compute_return_note_serial_num() -> word
 end
 
 #### HELPER PROCEDURES
+# loc.0: note_id
 @locals(1)
 proc _create_p2id_note() -> felt
     padw mem_loadw_le.P2ID_SCRIPT_ROOT
@@ -331,24 +346,19 @@ proc _create_p2id_note() -> felt
     push.2 push.0
 
     ## => [inputs_ptr, number_of_inputs, RETURN_SERIAL_NUM, P2ID_SCRIPT_ROOT]
-    exec.note::build_recipient
+    exec.note::compute_and_store_recipient
     # => [RECIPIENT]
-
     mem_load.RETURN_NOTE_TYPE mem_load.RETURN_NOTE_TAG
     # => [note_type, note_tag, RECIPIENT]
-
     exec.output_note::create loc_store.0 
     # => []
-
     padw mem_loadw_le.RETURN_NOTE_ASSET_WORD
-    exec.native_account::remove_asset 
-    # => [ASSET]
-    loc_load.0 movdn.4
-    # => [ASSET1_OUT, note_id]
+    exec.asset_utils::expand_asset
+    exec.native_account::remove_asset dropw
+    padw mem_loadw_le.RETURN_NOTE_ASSET_WORD
+    exec.asset_utils::expand_asset
+    loc_load.0 movdn.8
     exec.output_note::add_asset
-    # => [note_id]
-    loc_load.0
-    # => [note_id]
     exec.sys::truncate_stack
 end
 

@@ -116,7 +116,7 @@ end
 ##### VALIDATORS
 pub proc validate_pool_code_hash(pool_code_hash: word) -> i1
     push.ACCEPTED_CODE_HASHES_MAPPING_SLOT[0..2] exec.active_account::get_map_item
-    drop drop drop
+    movdn.3 drop drop drop
     # => [is_code_hash_accepted]
     exec.sys::truncate_stack
 end

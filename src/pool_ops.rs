@@ -1,30 +1,80 @@
-use crate::utils::{create_library, get_p2id_root_hash, read_masm_to_string};
+use std::sync::{Arc, LazyLock};
+
+use crate::utils::{get_p2id_root_hash, read_masm_to_string};
 use anyhow::{Result, anyhow};
 use miden_client::{
     Felt, Word,
     account::AccountId,
-    assembly::Library,
+    assembly::{
+        Assembler, DefaultSourceManager, Library, Module, ModuleKind, Path as AssemblyPath,
+    },
     asset::FungibleAsset,
-    note::{Note, NoteAssets, NoteMetadata, NoteRecipient, NoteTag, NoteType},
+    note::{Note, NoteAssets, NoteRecipient, NoteTag, NoteType, PartialNoteMetadata},
 };
 use miden_protocol::{
-    FieldElement,
-    note::{NoteInputs, NoteScript},
+    note::{NoteScript, NoteStorage},
     transaction::{TransactionKernel, TransactionScript},
 };
 use miden_standards::StandardsLib;
 
+pub fn shared_source_manager() -> Arc<DefaultSourceManager> {
+    static SOURCE_MANAGER: LazyLock<Arc<DefaultSourceManager>> =
+        LazyLock::new(|| Arc::new(DefaultSourceManager::default()));
+    SOURCE_MANAGER.clone()
+}
+
+pub fn kernel_assembler() -> Assembler {
+    TransactionKernel::assembler_with_source_manager(shared_source_manager())
+}
+
+pub fn create_library(
+    assembler: Assembler,
+    library_path: &str,
+    source_code: &str,
+) -> Result<Arc<Library>, Box<dyn std::error::Error>> {
+    let source_manager = shared_source_manager();
+    let module = Module::parser(ModuleKind::Library).parse_str(
+        AssemblyPath::new(library_path),
+        source_code,
+        source_manager,
+    )?;
+    Ok(assembler.assemble_library([module])?)
+}
+
+/// Compiles the asset_utils MASM library (expand_asset, compress_asset).
+pub fn get_asset_utils_library() -> Result<Arc<Library>> {
+    let source = read_masm_to_string("accounts", "asset_utils")?;
+    let assembler = kernel_assembler().with_warnings_as_errors(true);
+    create_library(assembler, "zoro::asset_utils", &source)
+        .map_err(|e| anyhow!("Failed to compile asset_utils library: {e:?}"))
+}
+
+fn compile_note_script(library_path: &str, source: &str, static_libs: &[Arc<Library>]) -> Result<NoteScript> {
+    let mut assembler = kernel_assembler().with_warnings_as_errors(true);
+    for lib in static_libs {
+        assembler = assembler
+            .with_static_library(lib.clone())
+            .map_err(|e| anyhow!("Failed to add static library: {e:?}"))?;
+    }
+    let library = create_library(assembler, library_path, source)
+        .map_err(|e| anyhow!("Failed to compile note script library: {e:?}"))?;
+    NoteScript::from_library(&library).map_err(|e| anyhow!("Failed to create note script: {e:?}"))
+}
+
 /// Compiles the pool MASM library from source.
-pub fn get_pool_library() -> Result<Library> {
+pub fn get_pool_library() -> Result<Arc<Library>> {
     let math_library = get_math_library()?;
     let lp_local_library = get_lp_local_library()?;
+    let asset_utils_library = get_asset_utils_library()?;
     let source = read_masm_to_string("accounts", "xyk_pool")?;
-    let assembler = TransactionKernel::assembler()
+    let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(math_library)
         .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
         // .with_static_library(storage_utils_library)
         // .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?
+        .with_static_library(asset_utils_library)
+        .map_err(|e| anyhow!("Failed to add asset_utils library to assembler: {e:?}"))?
         .with_static_library(lp_local_library)
         .map_err(|e| anyhow!("Failed to add lp_local library to assembler: {e:?}"))?;
     create_library(assembler, "zoro::xyk_pool", &source)
@@ -32,28 +82,31 @@ pub fn get_pool_library() -> Result<Library> {
 }
 
 /// Compiles the math MASM library (sqrt, safe_sub, safe_cast_u64_into_felt, etc.).
-pub fn get_math_library() -> Result<Library> {
+pub fn get_math_library() -> Result<Arc<Library>> {
     let source = read_masm_to_string("accounts", "math")?;
-    let assembler = TransactionKernel::assembler().with_warnings_as_errors(true);
+    let assembler = kernel_assembler().with_warnings_as_errors(true);
     create_library(assembler, "zoro::math", &source)
         .map_err(|e| anyhow!("Failed to compile math library: {e:?}"))
 }
 
 /// Compiles the lp_local MASM library (get_lp_amount_out, deposit, withdraw, etc.).
 /// Depends on math and storage_utils libraries.
-pub fn get_lp_local_library() -> Result<Library> {
+pub fn get_lp_local_library() -> Result<Arc<Library>> {
     let math_library = get_math_library()?;
     let storage_utils_library = get_storage_utils_library()?;
+    let asset_utils_library = get_asset_utils_library()?;
 
     let source = read_masm_to_string("accounts", "lp_local")?;
-    let assembler = TransactionKernel::assembler()
+    let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_dynamic_library(StandardsLib::default())
         .map_err(|e| anyhow!("Failed to add standards library to assembler: {e:?}"))?
         .with_static_library(math_library)
         .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
         .with_static_library(storage_utils_library)
-        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?;
+        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?
+        .with_static_library(asset_utils_library)
+        .map_err(|e| anyhow!("Failed to add asset_utils library to assembler: {e:?}"))?;
     create_library(assembler, "zoro::lp_local", &source)
         .map_err(|e| anyhow!("Failed to compile lp_local library: {e:?}"))
 }
@@ -71,18 +124,21 @@ fn generate_lp_local_fuzz_dummy_source() -> Result<String> {
 }
 
 /// Compiles the lp_local fuzz dummy library (generated from lp_local.masm with public mint/burn).
-pub fn get_lp_local_fuzz_dummy_library() -> Result<Library> {
+pub fn get_lp_local_fuzz_dummy_library() -> Result<Arc<Library>> {
     let math_library = get_math_library()?;
     let storage_utils_library = get_storage_utils_library()?;
+    let asset_utils_library = get_asset_utils_library()?;
     let source = generate_lp_local_fuzz_dummy_source()?;
-    let assembler = TransactionKernel::assembler()
+    let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_dynamic_library(StandardsLib::default())
         .map_err(|e| anyhow!("Failed to add standards library to assembler: {e:?}"))?
         .with_static_library(math_library)
         .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
         .with_static_library(storage_utils_library)
-        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?;
+        .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?
+        .with_static_library(asset_utils_library)
+        .map_err(|e| anyhow!("Failed to add asset_utils library to assembler: {e:?}"))?;
     create_library(assembler, "zoro::lp_local", &source)
         .map_err(|e| anyhow!("Failed to compile lp_local_fuzz_dummy library: {e:?}"))
 }
@@ -95,12 +151,12 @@ pub fn compile_lp_local_fuzz_tx_script(source: &str) -> Result<TransactionScript
 
 /// Compiles the registry MASM library (order_assets, register_pool, etc.).
 /// Depends on math and storage_utils libraries.
-pub fn get_registry_library() -> Result<Library> {
+pub fn get_registry_library() -> Result<Arc<Library>> {
     let math_library = get_math_library()?;
     let storage_utils_library = get_storage_utils_library()?;
     let xyk_pool_library = get_pool_library()?;
     let source = read_masm_to_string("accounts", "registry")?;
-    let assembler = TransactionKernel::assembler()
+    let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(math_library)
         .map_err(|e| anyhow!("Failed to add math library to assembler: {e:?}"))?
@@ -114,10 +170,10 @@ pub fn get_registry_library() -> Result<Library> {
 
 /// Compiles the storage_utils MASM library (add_to_storage_item, add_to_map_item, set_map_item).
 /// Depends on the math library.
-pub fn get_storage_utils_library() -> Result<Library> {
+pub fn get_storage_utils_library() -> Result<Arc<Library>> {
     let math_library = get_math_library()?;
     let source = read_masm_to_string("accounts", "storage_utils")?;
-    let assembler = TransactionKernel::assembler()
+    let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(math_library)
         .unwrap_or_else(|e| panic!("Failed to add math library to assembler: {e:?}"));
@@ -126,11 +182,11 @@ pub fn get_storage_utils_library() -> Result<Library> {
 }
 
 /// Compiles the storage_fuzz_dummy MASM library (minimal dummy with slot constants).
-pub fn get_storage_fuzz_dummy_library() -> Result<Library> {
+pub fn get_storage_fuzz_dummy_library() -> Result<Arc<Library>> {
     let storage_utils_library = get_storage_utils_library()?;
     let source = read_masm_to_string("accounts", "storage_fuzz_dummy")?;
 
-    let assembler = TransactionKernel::assembler()
+    let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(storage_utils_library)
         .unwrap_or_else(|e| panic!("Failed to add storage_utils library to assembler: {e:?}"));
@@ -143,7 +199,7 @@ pub fn get_storage_fuzz_dummy_library() -> Result<Library> {
 pub fn compile_storage_fuzz_tx_script(source: &str) -> Result<TransactionScript> {
     let storage_utils_library = get_storage_utils_library()?;
     let storage_fuzz_dummy_library = get_storage_fuzz_dummy_library()?;
-    let assembler = TransactionKernel::assembler()
+    let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(storage_utils_library)
         .map_err(|e| anyhow!("Failed to add storage_utils library: {e:?}"))?
@@ -156,8 +212,8 @@ pub fn compile_storage_fuzz_tx_script(source: &str) -> Result<TransactionScript>
 }
 
 /// Compiles a transaction script from arbitrary MASM source, linked against the pool library.
-pub fn compile_custom_tx_script(pool_library: &Library, source: &str) -> Result<TransactionScript> {
-    let assembler = TransactionKernel::assembler()
+pub fn compile_custom_tx_script(pool_library: &Arc<Library>, source: &str) -> Result<TransactionScript> {
+    let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(pool_library.clone())
         .map_err(|e| anyhow!("Failed to add pool library to assembler: {e:?}"))?;
@@ -169,7 +225,7 @@ pub fn compile_custom_tx_script(pool_library: &Library, source: &str) -> Result<
 
 /// Compiles a transaction script that calls the given pool procedure via `call`.
 pub fn compile_pool_tx_script(
-    pool_library: &Library,
+    pool_library: &Arc<Library>,
     procedure_name: &str,
 ) -> Result<TransactionScript> {
     let source = format!("use zoro::xyk_pool\nbegin\n    exec.xyk_pool::{procedure_name}\nend");
@@ -179,17 +235,15 @@ pub fn compile_pool_tx_script(
 /// Compiles the lp_local deposit note script.
 /// The script loads assets and user_id from the note via active_note::get_assets/get_inputs,
 /// then calls lp_local::deposit with [ASSET0, ASSET1, user_id_prefix, user_id_suffix].
-pub fn compile_lp_local_deposit_note_script(lp_local_library: &Library) -> Result<NoteScript> {
+pub fn compile_lp_local_deposit_note_script(lp_local_library: &Arc<Library>) -> Result<NoteScript> {
+    let asset_utils_library = get_asset_utils_library()?;
     let source = read_masm_to_string("notes", "xyk_deposit")
         .map_err(|e| anyhow!("Failed to read xyk_deposit note script: {e:?}"))?;
-    let assembler = TransactionKernel::assembler()
-        .with_warnings_as_errors(true)
-        .with_static_library(lp_local_library.clone())
-        .map_err(|e| anyhow!("Failed to add lp_local library to assembler: {e:?}"))?;
-    let program = assembler
-        .assemble_program(source)
-        .map_err(|e| anyhow!("Failed to compile lp_local deposit note script: {e:?}"))?;
-    Ok(NoteScript::new(program))
+    compile_note_script(
+        "note::xyk_deposit",
+        &source,
+        &[lp_local_library.clone(), asset_utils_library],
+    )
 }
 
 /// Compiles the register xyk pool note script.
@@ -198,23 +252,18 @@ pub fn compile_xyk_register_note_script() -> Result<NoteScript> {
     let xyk_registry_lib = get_registry_library()?;
     let source = read_masm_to_string("notes", "xyk_register")
         .map_err(|e| anyhow!("Failed to read xyk_register note script: {e:?}"))?;
-    let assembler = TransactionKernel::assembler()
-        .with_warnings_as_errors(true)
-        .with_static_library(xyk_pool_lib)
-        .map_err(|e| anyhow!("Failed to add xyk_pool library to assembler: {e:?}"))?
-        .with_static_library(xyk_registry_lib)
-        .map_err(|e| anyhow!("Failed to add xyk_registry library to assembler: {e:?}"))?;
-    let program = assembler
-        .assemble_program(source)
-        .map_err(|e| anyhow!("Failed to compile lp_local deposit note script: {e:?}"))?;
-    Ok(NoteScript::new(program))
+    compile_note_script(
+        "note::xyk_register",
+        &source,
+        &[xyk_pool_lib, xyk_registry_lib],
+    )
 }
 
 /// Builds a deposit note targeting the lp_local pool.
 /// Note inputs: [user_id_prefix, user_id_suffix].
 pub fn build_lp_local_deposit_note(
     pool_id: AccountId,
-    lp_local_library: &Library,
+    lp_local_library: &Arc<Library>,
     token0_asset: FungibleAsset,
     token1_asset: FungibleAsset,
     user_id: AccountId,
@@ -222,35 +271,28 @@ pub fn build_lp_local_deposit_note(
     serial_num: Word,
 ) -> Result<Note> {
     let script = compile_lp_local_deposit_note_script(lp_local_library)?;
-    let inputs = NoteInputs::new(vec![user_id.prefix().into(), user_id.suffix()])?;
+    let storage = NoteStorage::new(vec![user_id.prefix().into(), user_id.suffix()])?;
     let assets = NoteAssets::new(vec![token0_asset.into(), token1_asset.into()])?;
     let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
+    let metadata = PartialNoteMetadata::new(sender, NoteType::Public).with_tag(tag);
+    let recipient = NoteRecipient::new(serial_num, script, storage);
     Ok(Note::new(assets, metadata, recipient))
 }
 
 /// Compiles the lp_local withdraw note script.
 /// The script reads note inputs and calls lp_local::withdraw with
 /// [LP_AMOUNT_WORD, user_id_prefix, user_id_suffix, note_tag, note_type, RECIPIENT_WORD].
-pub fn compile_lp_local_withdraw_note_script(lp_local_library: &Library) -> Result<NoteScript> {
+pub fn compile_lp_local_withdraw_note_script(lp_local_library: &Arc<Library>) -> Result<NoteScript> {
     let source = read_masm_to_string("notes", "xyk_withdraw")
         .map_err(|e| anyhow!("Failed to read xyk_withdraw note script: {e:?}"))?;
-    let assembler = TransactionKernel::assembler()
-        .with_warnings_as_errors(true)
-        .with_static_library(lp_local_library.clone())
-        .map_err(|e| anyhow!("Failed to add lp_local library to assembler: {e:?}"))?;
-    let program = assembler
-        .assemble_program(source)
-        .map_err(|e| anyhow!("Failed to compile lp_local withdraw note script: {e:?}"))?;
-    Ok(NoteScript::new(program))
+    compile_note_script("note::xyk_withdraw", &source, std::slice::from_ref(lp_local_library))
 }
 
 /// Builds a withdraw note targeting the lp_local pool.
 /// Note inputs: [lp_amount, 0, 0, 0,  note_tag, note_type, 0, 0,  r0, r1, r2, r3].
 pub fn build_lp_local_withdraw_note(
     pool_id: AccountId,
-    lp_local_library: &Library,
+    lp_local_library: &Arc<Library>,
     lp_amount: u64,
     sender: AccountId,
     return_note_tag: Felt,
@@ -259,11 +301,11 @@ pub fn build_lp_local_withdraw_note(
 ) -> Result<Note> {
     let return_note_root_hash = get_p2id_root_hash();
     let script = compile_lp_local_withdraw_note_script(lp_local_library)?;
-    let inputs = NoteInputs::new(vec![
+    let storage = NoteStorage::new(vec![
         Felt::ZERO,
         Felt::ZERO,
         Felt::ZERO,
-        Felt::new(lp_amount),
+        Felt::new(lp_amount)?,
         return_note_tag,
         return_note_type,
         Felt::ZERO,
@@ -275,41 +317,43 @@ pub fn build_lp_local_withdraw_note(
     ])?;
     let assets = NoteAssets::new(vec![])?;
     let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-    let recipient = NoteRecipient::new(withdraw_note_serial, script, inputs);
+    let metadata = PartialNoteMetadata::new(sender, NoteType::Public).with_tag(tag);
+    let recipient = NoteRecipient::new(withdraw_note_serial, script, storage);
     Ok(Note::new(assets, metadata, recipient))
 }
 
 /// Compiles a note script that calls the given pool procedure via `call`.
 pub fn compile_pool_note_script(
-    pool_library: &Library,
+    pool_library: &Arc<Library>,
     procedure_name: &str,
 ) -> Result<NoteScript> {
-    let source = format!("use.zoro::xyk_pool\nbegin\n    call.xyk_pool::{procedure_name}\nend");
-    let assembler = TransactionKernel::assembler()
-        .with_warnings_as_errors(true)
-        .with_static_library(pool_library.clone())
-        .map_err(|e| anyhow!("Failed to add pool library to assembler: {e:?}"))?;
-    let program = assembler
-        .assemble_program(source)
-        .map_err(|e| anyhow!("Failed to compile {procedure_name} note script: {e:?}"))?;
-    Ok(NoteScript::new(program))
+    let source = format!(
+        "@note_script\nuse zoro::xyk_pool\npub proc main\n    call.xyk_pool::{procedure_name}\nend"
+    );
+    compile_note_script(
+        &format!("note::xyk_pool::{procedure_name}"),
+        &source,
+        &[pool_library.clone()],
+    )
 }
 
 /// Compiles the xyk_pool library with lp_local, math, and storage_utils as dependencies.
 /// Used when deploying a combined pool (lp_local + xyk_pool on the same account).
-pub fn get_combined_pool_library() -> Result<Library> {
+pub fn get_combined_pool_library() -> Result<Arc<Library>> {
     let math_library = get_math_library()?;
     let storage_utils_library = get_storage_utils_library()?;
+    let asset_utils_library = get_asset_utils_library()?;
     let lp_local_library = get_lp_local_library()?;
 
     let source = read_masm_to_string("accounts", "xyk_pool")?;
-    let assembler = TransactionKernel::assembler()
+    let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(math_library)
         .map_err(|e| anyhow!("Failed to add math library: {e:?}"))?
         .with_static_library(storage_utils_library)
         .map_err(|e| anyhow!("Failed to add storage_utils library: {e:?}"))?
+        .with_static_library(asset_utils_library)
+        .map_err(|e| anyhow!("Failed to add asset_utils library: {e:?}"))?
         .with_static_library(lp_local_library)
         .map_err(|e| anyhow!("Failed to add lp_local library: {e:?}"))?;
     create_library(assembler, "zoro::xyk_pool", &source)
@@ -318,27 +362,25 @@ pub fn get_combined_pool_library() -> Result<Library> {
 
 /// Compiles the xyk_swap_exact_tokens_for_tokens note script, linked against the combined pool library.
 pub fn compile_xyk_swap_exact_tokens_for_tokens_note_script(
-    xyk_pool_library: &Library,
+    xyk_pool_library: &Arc<Library>,
 ) -> Result<NoteScript> {
+    let asset_utils_library = get_asset_utils_library()?;
     let source = read_masm_to_string("notes", "xyk_swap_exact_tokens_for_tokens").map_err(|e| {
         anyhow!("Failed to read xyk_swap_exact_tokens_for_tokens note script: {e:?}")
     })?;
-    let assembler = TransactionKernel::assembler()
-        .with_warnings_as_errors(true)
-        .with_static_library(xyk_pool_library.clone())
-        .map_err(|e| anyhow!("Failed to add xyk_pool library to assembler: {e:?}"))?;
-    let program = assembler.assemble_program(source).map_err(|e| {
-        anyhow!("Failed to compile xyk_swap_exact_tokens_for_tokens note script: {e:?}")
-    })?;
-    Ok(NoteScript::new(program))
+    compile_note_script(
+        "note::xyk_swap_exact_tokens_for_tokens",
+        &source,
+        &[xyk_pool_library.clone(), asset_utils_library],
+    )
 }
 
 pub fn build_dummy_register_note(registry_id: &AccountId, serial_num: Word) -> Note {
     let script = compile_xyk_register_note_script().unwrap();
     let assets = NoteAssets::new(vec![]).unwrap();
     let tag = NoteTag::with_account_target(*registry_id);
-    let metadata = NoteMetadata::new(*registry_id, NoteType::Public, tag);
-    let inputs = NoteInputs::new(
+    let metadata = PartialNoteMetadata::new(*registry_id, NoteType::Public).with_tag(tag);
+    let storage = NoteStorage::new(
         [
             Felt::ZERO,
             Felt::ZERO,
@@ -352,7 +394,7 @@ pub fn build_dummy_register_note(registry_id: &AccountId, serial_num: Word) -> N
         .into(),
     )
     .unwrap();
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
+    let recipient = NoteRecipient::new(serial_num, script, storage);
     Note::new(assets, metadata, recipient)
 }
 
@@ -367,7 +409,7 @@ pub fn build_xyk_register_note(
 ) -> Result<Note> {
     let script = compile_xyk_register_note_script()?;
 
-    let inputs = NoteInputs::new(vec![
+    let inputs = NoteStorage::new(vec![
         token0.prefix().into(),
         token0.suffix(),
         token1.prefix().into(),
@@ -379,18 +421,17 @@ pub fn build_xyk_register_note(
     ])?;
 
     let assets = NoteAssets::new(vec![])?;
-    // let tag = NoteTag::with_account_target(*registry_id);
     let tag = NoteTag::new(0);
-    let metadata = NoteMetadata::new(*sender, NoteType::Public, tag);
+    let metadata = PartialNoteMetadata::new(*sender, NoteType::Public).with_tag(tag);
     let recipient = NoteRecipient::new(serial_num, script.clone(), inputs.clone());
     println!(
-        "REGISTER NOTE recipient: {:?}, serial: {:?}, script {:?}, inputs {:?}, tag: {:?}, registry_prefix: {:?}",
+        "REGISTER NOTE recipient: {:?}, serial: {:?}, script {:?}, storage {:?}, tag: {:?}, registry_prefix: {:?}",
         recipient.digest(),
         serial_num,
         script.root(),
         inputs,
         tag,
-        registry_id.prefix().as_u64()
+        registry_id.prefix().as_felt().as_canonical_u64()
     );
 
     Ok(Note::new(assets, metadata, recipient))
@@ -404,7 +445,7 @@ pub fn build_xyk_register_note(
 ///   word 2: [r0, r1, r2, r3]                   - RECIPIENT digest
 pub fn build_xyk_swap_exact_tokens_for_tokens_note(
     pool_id: AccountId,
-    xyk_pool_library: &Library,
+    xyk_pool_library: &Arc<Library>,
     input_asset: FungibleAsset,
     min_output_asset: FungibleAsset,
     deadline: u64,
@@ -415,12 +456,12 @@ pub fn build_xyk_swap_exact_tokens_for_tokens_note(
 ) -> Result<Note> {
     let script = compile_xyk_swap_exact_tokens_for_tokens_note_script(xyk_pool_library)?;
     let p2id_root = get_p2id_root_hash();
-    let inputs = NoteInputs::new(vec![
+    let storage = NoteStorage::new(vec![
         min_output_asset.faucet_id().prefix().as_felt(),
         min_output_asset.faucet_id().suffix(),
         Felt::ZERO,
-        Felt::new(min_output_asset.amount()),
-        Felt::new(deadline),
+        Felt::new(min_output_asset.amount().as_u64())?,
+        Felt::new(deadline)?,
         return_note_tag,
         return_note_type,
         Felt::ZERO,
@@ -432,26 +473,24 @@ pub fn build_xyk_swap_exact_tokens_for_tokens_note(
 
     let assets = NoteAssets::new(vec![input_asset.into()])?;
     let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
+    let metadata = PartialNoteMetadata::new(sender, NoteType::Public).with_tag(tag);
+    let recipient = NoteRecipient::new(serial_num, script, storage);
     Ok(Note::new(assets, metadata, recipient))
 }
 
 /// Compiles the xyk_swap_tokens_for_exact_tokens note script, linked against the combined pool library.
 pub fn compile_xyk_swap_tokens_for_exact_tokens_note_script(
-    xyk_pool_library: &Library,
+    xyk_pool_library: &Arc<Library>,
 ) -> Result<NoteScript> {
+    let asset_utils_library = get_asset_utils_library()?;
     let source = read_masm_to_string("notes", "xyk_swap_tokens_for_exact_tokens").map_err(|e| {
         anyhow!("Failed to read xyk_swap_tokens_for_exact_tokens note script: {e:?}")
     })?;
-    let assembler = TransactionKernel::assembler()
-        .with_warnings_as_errors(true)
-        .with_static_library(xyk_pool_library.clone())
-        .map_err(|e| anyhow!("Failed to add xyk_pool library to assembler: {e:?}"))?;
-    let program = assembler.assemble_program(source).map_err(|e| {
-        anyhow!("Failed to compile xyk_swap_tokens_for_exact_tokens note script: {e:?}")
-    })?;
-    Ok(NoteScript::new(program))
+    compile_note_script(
+        "note::xyk_swap_tokens_for_exact_tokens",
+        &source,
+        &[xyk_pool_library.clone(), asset_utils_library],
+    )
 }
 
 /// Builds a swap note targeting the combined pool (lp_local + xyk_pool).
@@ -462,7 +501,7 @@ pub fn compile_xyk_swap_tokens_for_exact_tokens_note_script(
 ///   word 2: [r0, r1, r2, r3]                                   - RECIPIENT digest
 pub fn build_xyk_swap_tokens_for_exact_tokens_note(
     pool_id: AccountId,
-    xyk_pool_library: &Library,
+    xyk_pool_library: &Arc<Library>,
     max_input_asset: FungibleAsset,
     exact_output_asset: FungibleAsset,
     deadline: u64,
@@ -473,12 +512,12 @@ pub fn build_xyk_swap_tokens_for_exact_tokens_note(
 ) -> Result<Note> {
     let script = compile_xyk_swap_tokens_for_exact_tokens_note_script(xyk_pool_library)?;
     let p2id_root = get_p2id_root_hash();
-    let inputs = NoteInputs::new(vec![
+    let storage = NoteStorage::new(vec![
         exact_output_asset.faucet_id().prefix().as_felt(),
         exact_output_asset.faucet_id().suffix(),
         Felt::ZERO,
-        Felt::new(exact_output_asset.amount()),
-        Felt::new(deadline),
+        Felt::new(exact_output_asset.amount().as_u64())?,
+        Felt::new(deadline)?,
         return_note_tag,
         return_note_type,
         Felt::ZERO,
@@ -490,8 +529,8 @@ pub fn build_xyk_swap_tokens_for_exact_tokens_note(
 
     let assets = NoteAssets::new(vec![max_input_asset.into()])?;
     let tag = NoteTag::with_account_target(pool_id);
-    let metadata = NoteMetadata::new(sender, NoteType::Public, tag);
-    let recipient = NoteRecipient::new(serial_num, script, inputs);
+    let metadata = PartialNoteMetadata::new(sender, NoteType::Public).with_tag(tag);
+    let recipient = NoteRecipient::new(serial_num, script, storage);
     Ok(Note::new(assets, metadata, recipient))
 }
 
