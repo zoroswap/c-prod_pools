@@ -35,13 +35,13 @@ const ERR_ZERO_AMOUNT = "Zero amount"
 
 ### MEMORY LOCATIONS
 const ASSET_IN_WORD = 20
-const ASSET_IN_ID_PREFIX = 20
-const ASSET_IN_ID_SUFFIX = 21
+const ASSET_IN_ID_SUFFIX = 20
+const ASSET_IN_ID_PREFIX = 21
 const AMOUNT_IN = 23
 
 const ASSET_OUT_WORD = 28
-const ASSET_OUT_ID_PREFIX = 28
-const ASSET_OUT_ID_SUFFIX = 29
+const ASSET_OUT_ID_SUFFIX = 28
+const ASSET_OUT_ID_PREFIX = 29
 const AMOUNT_OUT = 31
 
 ## NOTE METADATA
@@ -57,8 +57,8 @@ const RETURN_NOTE_ASSET_ID_SUFFIX = 41
 const RETURN_NOTE_AMOUNT = 43
 
 const USER_ACCOUNT_ID_WORD = 48
-const USER_ACCOUNT_ID_PREFIX = 48
-const USER_ACCOUNT_ID_SUFFIX = 49
+const USER_ACCOUNT_ID_SUFFIX = 48
+const USER_ACCOUNT_ID_PREFIX = 49
 const INPUT_NOTE_SERIAL = 52
 
 pub proc quote(amount_A: felt, reserve_A: felt, reserve_B: felt) -> felt
@@ -173,28 +173,21 @@ end
 pub proc swap_exact_tokens_for_tokens(note_serial: word, user_id_prefix: felt, user_id_suffix: felt, asset_in: word, min_asset_out: word, note_tag: felt, note_type: felt, p2id_script_root: word) -> felt
 
     # Initial stack
-    # => [sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
-
-    # get SERIAL of this note
-    exec.active_note::get_serial_number
+    # => [NOTE_SERIAL, user_suf, user_pre, ASSET_IN, MIN_ASSET_OUT, note_tag, note_type, P2ID_SCRIPT_ROOT]
+  
     # => [serial_num, sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
- 
-    # store user account id
     mem_storew_le.INPUT_NOTE_SERIAL dropw
-
     # store user account id
-    mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
-
+    mem_store.USER_ACCOUNT_ID_SUFFIX mem_store.USER_ACCOUNT_ID_PREFIX
     ### mem store asset in, min asset out
     mem_storew_le.ASSET_IN_WORD dropw mem_storew_le.ASSET_OUT_WORD dropw
-
     ### store note metadata in memory
     mem_store.RETURN_NOTE_TAG mem_store.RETURN_NOTE_TYPE mem_storew_le.P2ID_SCRIPT_ROOT dropw
-
-    mem_load.ASSET_OUT_ID_SUFFIX mem_load.ASSET_OUT_ID_PREFIX 
+   
+    mem_load.ASSET_OUT_ID_PREFIX mem_load.ASSET_OUT_ID_SUFFIX
     exec.get_reserve_by_asset_id
     # => [reserve_out]
-    mem_load.ASSET_IN_ID_SUFFIX mem_load.ASSET_IN_ID_PREFIX 
+    mem_load.ASSET_IN_ID_PREFIX mem_load.ASSET_IN_ID_SUFFIX
     exec.get_reserve_by_asset_id
     # => [reserve_in, reserve_out]
     mem_load.AMOUNT_IN
@@ -251,11 +244,7 @@ pub proc swap_tokens_for_exact_tokens(user_id_prefix: felt, user_id_suffix: felt
     # store user account id
     mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
     ### mem store asset in, min asset out
-    ### ASSET_OUT arrives from the note as [prefix, suffix, 0, amount]; normalize the
-    ### first two elements to [suffix, prefix, ...] to match the compress_asset/expand_asset
-    ### convention used everywhere else (ASSET_IN, RETURN_NOTE_ASSET_WORD, reserve lookups).
-    # @todo fix this shit
-    swap
+  
     mem_storew_le.ASSET_OUT_WORD dropw mem_storew_le.ASSET_IN_WORD dropw
 
     ### store note metadata in memory
@@ -339,7 +328,6 @@ end
 @locals(1)
 proc _create_p2id_note() -> felt
     padw mem_loadw_le.P2ID_SCRIPT_ROOT
-   
     exec.compute_return_note_serial_num
     mem_load.USER_ACCOUNT_ID_SUFFIX mem_store.0
     mem_load.USER_ACCOUNT_ID_PREFIX mem_store.1
@@ -358,7 +346,9 @@ proc _create_p2id_note() -> felt
     padw mem_loadw_le.RETURN_NOTE_ASSET_WORD
     exec.asset_utils::expand_asset
     loc_load.0 movdn.8
+    push.336 debug.stack.12 drop
     exec.output_note::add_asset
+    push.335 debug.stack.8 drop
     exec.sys::truncate_stack
 end
 

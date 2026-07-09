@@ -569,7 +569,7 @@ proc create_withdraw_return_note(amount_0_out: felt, amount_1_out: felt) -> felt
     # => [asset_0_out]
     push.0 loc_load.4 loc_load.3
     # => [ASSET_0_OUT]
-    loc_store_le.8
+    loc_storew_le.8
     # => [ASSET_0_OUT]
     exec.asset_utils::expand_asset
     exec.native_account::remove_asset

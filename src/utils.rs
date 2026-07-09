@@ -10,13 +10,12 @@ use miden_client::note::{NoteError, StandardNote};
 use miden_client::{
     AccountError, ClientError, Felt, Word,
     account::AccountId,
-    asset::{AssetCallbackFlag, AssetVault, AssetVaultKey},
     assembly::Library,
+    asset::{AssetCallbackFlag, AssetVault, AssetVaultKey},
     rpc::{GrpcClient, NodeRpcClient},
 };
 use miden_protocol::account::StorageSlotName;
 use miden_protocol::account::component::AccountComponentMetadata;
-
 
 use crate::pool_ops::{
     compile_xyk_register_note_script, get_combined_pool_library, get_lp_local_library,
@@ -39,14 +38,17 @@ pub fn zoro_component(
     slots: Vec<StorageSlot>,
     name: &str,
 ) -> Result<AccountComponent, AccountError> {
-    AccountComponent::new(library.as_ref().clone(), slots, AccountComponentMetadata::new(name))
+    AccountComponent::new(
+        library.as_ref().clone(),
+        slots,
+        AccountComponentMetadata::new(name),
+    )
 }
 
 pub fn vault_fungible_balance(vault: &AssetVault, faucet_id: AccountId) -> Result<u64> {
     let key = AssetVaultKey::new_fungible(faucet_id, AssetCallbackFlag::Disabled);
     Ok(vault.get_balance(key)?.as_u64())
 }
-
 
 pub async fn fetch_vault_for_account_from_chain(
     rpc_api: &Arc<GrpcClient>,
@@ -81,12 +83,8 @@ pub fn get_register_note_root_hash() -> Word {
 }
 
 pub fn get_pool_account_code_commitment() -> Word {
-    let lp_local_library = get_lp_local_library()
-        .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))
-        .unwrap();
-    let xyk_pool_library = get_combined_pool_library()
-        .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))
-        .unwrap();
+    let lp_local_library = get_lp_local_library().unwrap();
+    let xyk_pool_library = get_combined_pool_library().unwrap();
     let assets_mapping_slot =
         StorageSlot::with_empty_map(slot_name("zoro::lp_local::assets_mapping"));
     let reserve_slot = StorageSlot::with_empty_value(slot_name("zoro::lp_local::reserve"));

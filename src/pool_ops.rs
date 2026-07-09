@@ -49,7 +49,11 @@ pub fn get_asset_utils_library() -> Result<Arc<Library>> {
         .map_err(|e| anyhow!("Failed to compile asset_utils library: {e:?}"))
 }
 
-fn compile_note_script(library_path: &str, source: &str, static_libs: &[Arc<Library>]) -> Result<NoteScript> {
+fn compile_note_script(
+    library_path: &str,
+    source: &str,
+    static_libs: &[Arc<Library>],
+) -> Result<NoteScript> {
     let mut assembler = kernel_assembler().with_warnings_as_errors(true);
     for lib in static_libs {
         assembler = assembler
@@ -212,7 +216,10 @@ pub fn compile_storage_fuzz_tx_script(source: &str) -> Result<TransactionScript>
 }
 
 /// Compiles a transaction script from arbitrary MASM source, linked against the pool library.
-pub fn compile_custom_tx_script(pool_library: &Arc<Library>, source: &str) -> Result<TransactionScript> {
+pub fn compile_custom_tx_script(
+    pool_library: &Arc<Library>,
+    source: &str,
+) -> Result<TransactionScript> {
     let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(pool_library.clone())
@@ -282,10 +289,16 @@ pub fn build_lp_local_deposit_note(
 /// Compiles the lp_local withdraw note script.
 /// The script reads note inputs and calls lp_local::withdraw with
 /// [LP_AMOUNT_WORD, user_id_prefix, user_id_suffix, note_tag, note_type, RECIPIENT_WORD].
-pub fn compile_lp_local_withdraw_note_script(lp_local_library: &Arc<Library>) -> Result<NoteScript> {
+pub fn compile_lp_local_withdraw_note_script(
+    lp_local_library: &Arc<Library>,
+) -> Result<NoteScript> {
     let source = read_masm_to_string("notes", "xyk_withdraw")
         .map_err(|e| anyhow!("Failed to read xyk_withdraw note script: {e:?}"))?;
-    compile_note_script("note::xyk_withdraw", &source, std::slice::from_ref(lp_local_library))
+    compile_note_script(
+        "note::xyk_withdraw",
+        &source,
+        std::slice::from_ref(lp_local_library),
+    )
 }
 
 /// Builds a withdraw note targeting the lp_local pool.
@@ -457,8 +470,8 @@ pub fn build_xyk_swap_exact_tokens_for_tokens_note(
     let script = compile_xyk_swap_exact_tokens_for_tokens_note_script(xyk_pool_library)?;
     let p2id_root = get_p2id_root_hash();
     let storage = NoteStorage::new(vec![
-        min_output_asset.faucet_id().prefix().as_felt(),
         min_output_asset.faucet_id().suffix(),
+        min_output_asset.faucet_id().prefix().as_felt(),
         Felt::ZERO,
         Felt::new(min_output_asset.amount().as_u64())?,
         Felt::new(deadline)?,
