@@ -191,7 +191,7 @@ end
 
 #### PROCEDURES BY ASSET ID ####
 @locals(2)
-pub proc get_reserve_by_asset_id(asset_id_prefix: felt, asset_id_suffix: felt) -> felt
+pub proc get_reserve_by_asset_id(asset_id_suffix: felt, asset_id_prefix: felt) -> felt
     exec.get_asset_index
     eq.0
     if.true # asset 0

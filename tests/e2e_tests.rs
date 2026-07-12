@@ -265,6 +265,8 @@ async fn swap_exact_tokens_for_tokens_happy_path_test() -> Result<()> {
         "Swapping {} of token0 for token1 (min_out=0)",
         swap_amount_in
     );
+    println!("token0_id: {} {}", token0_id.suffix(), token0_id.prefix());
+    println!("token1_id: {} {}", token1_id.suffix(), token1_id.prefix());
 
     let expected_out = get_amount_out(swap_amount_in, r0_d, r1_d);
     println!("Expected amount_out (Rust): {}", expected_out);
@@ -488,10 +490,7 @@ async fn register_pool_happy_path_test() -> Result<()> {
     ]);
     let stored_code_hash = acc
         .storage()
-        .get_map_item(
-            &slot_name("zoro::registry::pools_mapping"),
-            pool_key,
-        )?;
+        .get_map_item(&slot_name("zoro::registry::pools_mapping"), pool_key)?;
 
     let expected = setup.pool.code().commitment();
     assert_eq!(

@@ -104,6 +104,8 @@ pub proc safe_cast_u64_into_felt(a: u64) -> felt
     ### loc.0: a_hi 
     ### loc.1: a_hi_scaled
     ### loc.2: res
+    # => [a_lo, a_hi]
+    swap 
     # => [a_hi, a_lo]
     loc_store.0 loc_load.0
     mul.U32_BOUND loc_store.1  

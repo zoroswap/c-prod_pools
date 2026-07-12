@@ -14,12 +14,11 @@ const ERR_INVALID_NUM_ASSETS = "Expected exactly 1 asset for swap"
 @note_script
 pub proc main
     push.0 exec.active_note::get_storage
-    # => [num_storage_items, dest_ptr]
-
+    # => [num_storage_items]
+    drop
     # Push P2ID_SCRIPT_ROOT word (mem[8..11])
     ### @todo verify if not le
-    padw mem_loadw_be.8
-    push.677 debug.stack.9 drop
+    padw mem_loadw_le.8
     # => [P2ID_SCRIPT_ROOT]
 
     # Push note_type, note_tag
@@ -33,18 +32,17 @@ pub proc main
     # Load note asset to memory at ptr=40
     push.40 exec.active_note::get_assets
     # => [num_assets, 40, ...]
-    swap drop
+    #swap drop
     push.EXPECTED_NUM_ASSETS eq assert.err=ERR_INVALID_NUM_ASSETS
     # => [MIN_ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
 
     # Load ASSET_IN word
-    padw mem_loadw_be.44 padw mem_loadw_be.40 exec.asset_utils::compress_asset
+    padw mem_loadw_le.44 padw mem_loadw_le.40 exec.asset_utils::compress_asset
     # => [ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
 
     # load user_id (sender)
     exec.active_note::get_sender
     # => [sender_suffix, sender_prefix, ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
-    push.678 debug.stack.21 drop
     call.xyk_pool::swap_exact_tokens_for_tokens
     exec.sys::truncate_stack
 end
