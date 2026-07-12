@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
 use crate::utils::{get_p2id_root_hash, read_masm_to_string};
@@ -6,14 +7,17 @@ use miden_client::{
     Felt, Word,
     account::AccountId,
     assembly::{
-        Assembler, DefaultSourceManager, Library, Module, ModuleKind, Path as AssemblyPath,
+        Assembler, DefaultSourceManager, Library, MastForest, Module, ModuleKind,
+        Path as AssemblyPath,
     },
     asset::FungibleAsset,
     note::{Note, NoteAssets, NoteRecipient, NoteTag, NoteType, PartialNoteMetadata},
 };
 use miden_protocol::{
+    assembly::LibraryExport,
     note::{NoteScript, NoteStorage},
     transaction::{TransactionKernel, TransactionScript},
+    vm::Program,
 };
 use miden_standards::StandardsLib;
 
@@ -27,10 +31,59 @@ pub fn kernel_assembler() -> Assembler {
     TransactionKernel::assembler_with_source_manager(shared_source_manager())
 }
 
+/// `Assembler::with_static_library` inlines a statically-linked library's MAST nodes into the
+/// new build, but `MastForestBuilder::new` only copies over that library's advice map — not its
+/// registered error codes. Without this, any `assert.err=CONST` defined in a statically-linked
+/// helper library (e.g. `lp_local`'s `ERR_UNKNOWN_ASSET`) shows up at runtime as a bare numeric
+/// error code instead of the original message, since the executing MastForest's error-code map
+/// never received the string. This re-attaches those mappings after assembly. It only touches
+/// debug info (not the MAST nodes/exports), so the library's digest is unaffected.
+fn merge_static_error_codes(library: Arc<Library>, static_libs: &[Arc<Library>]) -> Arc<Library> {
+    if static_libs.is_empty() {
+        return library;
+    }
+    let mut forest: MastForest = library.mast_forest().as_ref().clone();
+    for lib in static_libs {
+        let codes: Vec<(u64, Arc<str>)> = lib
+            .mast_forest()
+            .debug_info()
+            .error_codes()
+            .map(|(code, msg)| (*code, msg.clone()))
+            .collect();
+        forest.debug_info_mut().extend_error_codes(codes);
+    }
+    let exports: BTreeMap<Arc<AssemblyPath>, LibraryExport> =
+        library.exports().map(|export| (export.path(), export.clone())).collect();
+    Arc::new(
+        Library::new(Arc::new(forest), exports)
+            .expect("merging error codes must not change exports or MAST roots"),
+    )
+}
+
+/// Same fix as [`merge_static_error_codes`], but for an assembled [`Program`] (e.g. transaction
+/// scripts), which go through the same static-linking code path.
+fn merge_static_error_codes_into_program(program: Program, static_libs: &[Arc<Library>]) -> Program {
+    if static_libs.is_empty() {
+        return program;
+    }
+    let mut forest: MastForest = program.mast_forest().as_ref().clone();
+    for lib in static_libs {
+        let codes: Vec<(u64, Arc<str>)> = lib
+            .mast_forest()
+            .debug_info()
+            .error_codes()
+            .map(|(code, msg)| (*code, msg.clone()))
+            .collect();
+        forest.debug_info_mut().extend_error_codes(codes);
+    }
+    Program::with_kernel(Arc::new(forest), program.entrypoint(), program.kernel().clone())
+}
+
 pub fn create_library(
     assembler: Assembler,
     library_path: &str,
     source_code: &str,
+    static_libs: &[Arc<Library>],
 ) -> Result<Arc<Library>, Box<dyn std::error::Error>> {
     let source_manager = shared_source_manager();
     let module = Module::parser(ModuleKind::Library).parse_str(
@@ -38,14 +91,15 @@ pub fn create_library(
         source_code,
         source_manager,
     )?;
-    Ok(assembler.assemble_library([module])?)
+    let library = assembler.assemble_library([module])?;
+    Ok(merge_static_error_codes(library, static_libs))
 }
 
 /// Compiles the asset_utils MASM library (expand_asset, compress_asset).
 pub fn get_asset_utils_library() -> Result<Arc<Library>> {
     let source = read_masm_to_string("accounts", "asset_utils")?;
     let assembler = kernel_assembler().with_warnings_as_errors(true);
-    create_library(assembler, "zoro::asset_utils", &source)
+    create_library(assembler, "zoro::asset_utils", &source, &[])
         .map_err(|e| anyhow!("Failed to compile asset_utils library: {e:?}"))
 }
 
@@ -60,7 +114,7 @@ fn compile_note_script(
             .with_static_library(lib.clone())
             .map_err(|e| anyhow!("Failed to add static library: {e:?}"))?;
     }
-    let library = create_library(assembler, library_path, source)
+    let library = create_library(assembler, library_path, source, static_libs)
         .map_err(|e| anyhow!("Failed to compile note script library: {e:?}"))?;
     NoteScript::from_library(&library).map_err(|e| anyhow!("Failed to create note script: {e:?}"))
 }
@@ -70,6 +124,11 @@ pub fn get_pool_library() -> Result<Arc<Library>> {
     let math_library = get_math_library()?;
     let lp_local_library = get_lp_local_library()?;
     let asset_utils_library = get_asset_utils_library()?;
+    let static_libs = [
+        math_library.clone(),
+        asset_utils_library.clone(),
+        lp_local_library.clone(),
+    ];
     let source = read_masm_to_string("accounts", "xyk_pool")?;
     let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
@@ -81,7 +140,7 @@ pub fn get_pool_library() -> Result<Arc<Library>> {
         .map_err(|e| anyhow!("Failed to add asset_utils library to assembler: {e:?}"))?
         .with_static_library(lp_local_library)
         .map_err(|e| anyhow!("Failed to add lp_local library to assembler: {e:?}"))?;
-    create_library(assembler, "zoro::xyk_pool", &source)
+    create_library(assembler, "zoro::xyk_pool", &source, &static_libs)
         .map_err(|e| anyhow!("Failed to compile pool library: {e:?}"))
 }
 
@@ -89,7 +148,7 @@ pub fn get_pool_library() -> Result<Arc<Library>> {
 pub fn get_math_library() -> Result<Arc<Library>> {
     let source = read_masm_to_string("accounts", "math")?;
     let assembler = kernel_assembler().with_warnings_as_errors(true);
-    create_library(assembler, "zoro::math", &source)
+    create_library(assembler, "zoro::math", &source, &[])
         .map_err(|e| anyhow!("Failed to compile math library: {e:?}"))
 }
 
@@ -100,6 +159,11 @@ pub fn get_lp_local_library() -> Result<Arc<Library>> {
     let storage_utils_library = get_storage_utils_library()?;
     let asset_utils_library = get_asset_utils_library()?;
 
+    let static_libs = [
+        math_library.clone(),
+        storage_utils_library.clone(),
+        asset_utils_library.clone(),
+    ];
     let source = read_masm_to_string("accounts", "lp_local")?;
     let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
@@ -111,7 +175,7 @@ pub fn get_lp_local_library() -> Result<Arc<Library>> {
         .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?
         .with_static_library(asset_utils_library)
         .map_err(|e| anyhow!("Failed to add asset_utils library to assembler: {e:?}"))?;
-    create_library(assembler, "zoro::lp_local", &source)
+    create_library(assembler, "zoro::lp_local", &source, &static_libs)
         .map_err(|e| anyhow!("Failed to compile lp_local library: {e:?}"))
 }
 
@@ -132,6 +196,11 @@ pub fn get_lp_local_fuzz_dummy_library() -> Result<Arc<Library>> {
     let math_library = get_math_library()?;
     let storage_utils_library = get_storage_utils_library()?;
     let asset_utils_library = get_asset_utils_library()?;
+    let static_libs = [
+        math_library.clone(),
+        storage_utils_library.clone(),
+        asset_utils_library.clone(),
+    ];
     let source = generate_lp_local_fuzz_dummy_source()?;
     let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
@@ -143,7 +212,7 @@ pub fn get_lp_local_fuzz_dummy_library() -> Result<Arc<Library>> {
         .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?
         .with_static_library(asset_utils_library)
         .map_err(|e| anyhow!("Failed to add asset_utils library to assembler: {e:?}"))?;
-    create_library(assembler, "zoro::lp_local", &source)
+    create_library(assembler, "zoro::lp_local", &source, &static_libs)
         .map_err(|e| anyhow!("Failed to compile lp_local_fuzz_dummy library: {e:?}"))
 }
 
@@ -159,6 +228,11 @@ pub fn get_registry_library() -> Result<Arc<Library>> {
     let math_library = get_math_library()?;
     let storage_utils_library = get_storage_utils_library()?;
     let xyk_pool_library = get_pool_library()?;
+    let static_libs = [
+        math_library.clone(),
+        storage_utils_library.clone(),
+        xyk_pool_library.clone(),
+    ];
     let source = read_masm_to_string("accounts", "registry")?;
     let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
@@ -168,7 +242,7 @@ pub fn get_registry_library() -> Result<Arc<Library>> {
         .map_err(|e| anyhow!("Failed to add storage_utils library to assembler: {e:?}"))?
         .with_static_library(xyk_pool_library)
         .map_err(|e| anyhow!("Failed to add xyk_pool library to assembler: {e:?}"))?;
-    create_library(assembler, "zoro::registry", &source)
+    create_library(assembler, "zoro::registry", &source, &static_libs)
         .map_err(|e| anyhow!("Failed to compile registry library: {e:?}"))
 }
 
@@ -176,25 +250,27 @@ pub fn get_registry_library() -> Result<Arc<Library>> {
 /// Depends on the math library.
 pub fn get_storage_utils_library() -> Result<Arc<Library>> {
     let math_library = get_math_library()?;
+    let static_libs = [math_library.clone()];
     let source = read_masm_to_string("accounts", "storage_utils")?;
     let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(math_library)
         .unwrap_or_else(|e| panic!("Failed to add math library to assembler: {e:?}"));
-    create_library(assembler, "zoro::storage_utils", &source)
+    create_library(assembler, "zoro::storage_utils", &source, &static_libs)
         .map_err(|e| anyhow!("Failed to compile storage_utils library: {e:?}"))
 }
 
 /// Compiles the storage_fuzz_dummy MASM library (minimal dummy with slot constants).
 pub fn get_storage_fuzz_dummy_library() -> Result<Arc<Library>> {
     let storage_utils_library = get_storage_utils_library()?;
+    let static_libs = [storage_utils_library.clone()];
     let source = read_masm_to_string("accounts", "storage_fuzz_dummy")?;
 
     let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(storage_utils_library)
         .unwrap_or_else(|e| panic!("Failed to add storage_utils library to assembler: {e:?}"));
-    create_library(assembler, "zoro::storage_fuzz_dummy", &source)
+    create_library(assembler, "zoro::storage_fuzz_dummy", &source, &static_libs)
         .map_err(|e| anyhow!("Failed to compile storage_fuzz_dummy library: {e:?}"))
 }
 
@@ -203,6 +279,10 @@ pub fn get_storage_fuzz_dummy_library() -> Result<Arc<Library>> {
 pub fn compile_storage_fuzz_tx_script(source: &str) -> Result<TransactionScript> {
     let storage_utils_library = get_storage_utils_library()?;
     let storage_fuzz_dummy_library = get_storage_fuzz_dummy_library()?;
+    let static_libs = [
+        storage_utils_library.clone(),
+        storage_fuzz_dummy_library.clone(),
+    ];
     let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(storage_utils_library)
@@ -212,6 +292,7 @@ pub fn compile_storage_fuzz_tx_script(source: &str) -> Result<TransactionScript>
     let program = assembler
         .assemble_program(source)
         .map_err(|e| anyhow!("Failed to compile storage fuzz script: {e:?}"))?;
+    let program = merge_static_error_codes_into_program(program, &static_libs);
     Ok(TransactionScript::new(program))
 }
 
@@ -220,6 +301,7 @@ pub fn compile_custom_tx_script(
     pool_library: &Arc<Library>,
     source: &str,
 ) -> Result<TransactionScript> {
+    let static_libs = [pool_library.clone()];
     let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(pool_library.clone())
@@ -227,6 +309,7 @@ pub fn compile_custom_tx_script(
     let program = assembler
         .assemble_program(source)
         .map_err(|e| anyhow!("Failed to compile tx script: {e:?}"))?;
+    let program = merge_static_error_codes_into_program(program, &static_libs);
     Ok(TransactionScript::new(program))
 }
 
@@ -357,6 +440,12 @@ pub fn get_combined_pool_library() -> Result<Arc<Library>> {
     let storage_utils_library = get_storage_utils_library()?;
     let asset_utils_library = get_asset_utils_library()?;
     let lp_local_library = get_lp_local_library()?;
+    let static_libs = [
+        math_library.clone(),
+        storage_utils_library.clone(),
+        asset_utils_library.clone(),
+        lp_local_library.clone(),
+    ];
 
     let source = read_masm_to_string("accounts", "xyk_pool")?;
     let assembler = kernel_assembler()
@@ -369,7 +458,7 @@ pub fn get_combined_pool_library() -> Result<Arc<Library>> {
         .map_err(|e| anyhow!("Failed to add asset_utils library: {e:?}"))?
         .with_static_library(lp_local_library)
         .map_err(|e| anyhow!("Failed to add lp_local library: {e:?}"))?;
-    create_library(assembler, "zoro::xyk_pool", &source)
+    create_library(assembler, "zoro::xyk_pool", &source, &static_libs)
         .map_err(|e| anyhow!("Failed to compile combined pool library: {e:?}"))
 }
 

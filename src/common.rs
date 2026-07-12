@@ -35,7 +35,7 @@ use crate::{
     pool_ops::{
         create_library, get_combined_pool_library, get_lp_local_fuzz_dummy_library,
         get_lp_local_library, get_pool_library, get_registry_library, get_storage_utils_library,
-        kernel_assembler,
+        kernel_assembler, shared_source_manager,
     },
     utils::{
         auth_single_sig_component, fetch_vault_for_account_from_chain, get_register_note_root_hash,
@@ -63,11 +63,17 @@ pub async fn instantiate_simple_client(
         .into();
     println!("\nConnecting to endpoint: {}", endpoint);
 
+    // Share our source manager with the client so that error codes raised by the
+    // TransactionExecutor (and anywhere else inside the client) can be resolved back to the
+    // original MASM source spans/messages, instead of only showing a plain numeric error code.
+    // Without this, the client falls back to its own empty `DefaultSourceManager`, which has no
+    // knowledge of the modules/libraries we assembled ourselves via `kernel_assembler()`.
     let mut client = ClientBuilder::new()
         .rpc(rpc_api.clone())
         .authenticator(keystore)
         .in_debug_mode(true.into())
         .sqlite_store(store_path.into())
+        .source_manager(shared_source_manager())
         .build()
         .await?;
 
@@ -477,13 +483,19 @@ pub async fn deploy_storage_fuzz_dummy(
         .unwrap_or_else(|e| panic!("Failed to get storage_utils library: {e:?}"));
     // let math_library =
     //     get_math_library().unwrap_or_else(|e| panic!("Failed to get math library: {e:?}"));
+    let static_libs = [storage_utils_library.clone()];
     let assembler = kernel_assembler()
         .with_warnings_as_errors(true)
         .with_static_library(storage_utils_library)
         .unwrap_or_else(|e| panic!("Failed to add math library: {e:?}"));
 
-    let dummy_library = create_library(assembler.clone(), "zoro::storage_fuzz_dummy", &dummy_code)
-        .unwrap_or_else(|e| panic!("Failed to create storage_fuzz_dummy library: {e:?}"));
+    let dummy_library = create_library(
+        assembler.clone(),
+        "zoro::storage_fuzz_dummy",
+        &dummy_code,
+        &static_libs,
+    )
+    .unwrap_or_else(|e| panic!("Failed to create storage_fuzz_dummy library: {e:?}"));
 
     let value_slot = StorageSlot::with_value(
         slot_name("zoro::storage_fuzz_dummy::value_slot"),
