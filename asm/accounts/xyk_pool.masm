@@ -200,7 +200,8 @@ pub proc swap_exact_tokens_for_tokens(user_id_prefix: felt, user_id_suffix: felt
     exec.get_reserve_by_asset_id
     # => [reserve_in, reserve_out]
     mem_load.AMOUNT_IN
-    # => [amount_in, reserve_in, reserve_out]    exec.get_amount_out_u64 loc_store.1 loc_load.1
+    # => [amount_in, reserve_in, reserve_out]    
+    exec.get_amount_out_u64 dup loc_store.1
     # => [amount_out]
     mem_load.AMOUNT_OUT
 
@@ -346,7 +347,7 @@ proc _create_p2id_note() -> felt
     exec.note::compute_and_store_recipient
     # => [RECIPIENT]
     mem_load.RETURN_NOTE_TYPE mem_load.RETURN_NOTE_TAG
-    # => [note_type, note_tag, RECIPIENT]
+    # => [note_tag, note_type, RECIPIENT]
     exec.output_note::create loc_store.0 
     # => []
     padw mem_loadw_le.RETURN_NOTE_ASSET_WORD

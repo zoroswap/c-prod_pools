@@ -380,7 +380,7 @@ pub async fn deploy_combined_pool(
         .with_component(xyk_pool_component)
         .with_auth_component(NoAuth)
         .with_component(BasicWallet)
-        .build_with_schema_commitment()
+        .build() //_with_schema_commitment()
         .map_err(|e| anyhow!("Failed to build combined pool contract: {e:?}"))
         .unwrap();
 
@@ -620,7 +620,7 @@ pub async fn deploy_registry(
         .unwrap();
 
     println!(
-        "Registry deployed => ID: {:?}, accepted code hash: {:?}",
+        "Registry deployed => ID: {}, accepted code hash: {}",
         registry.id().to_hex(),
         accepted_pool_code_hash,
     );

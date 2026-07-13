@@ -10,10 +10,10 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 dashmap = "6.1.0"
 dotenv = "0.15"
-miden-assembly = "0.23"
-miden-client = { version = "0.15", features = ["testing", "tonic"] }
-miden-client-sqlite-store = { version = "0.15" }
-miden-core = "0.23"
+miden-assembly = "0.25"
+miden-client = { version = "0.15.3", features = ["testing", "tonic"] }
+miden-client-sqlite-store = { version = "0.15.3" }
+miden-core = "0.25"
 miden-protocol = { version = "0.15.3", default-features = false, features = [
   "testing",
 ] }
