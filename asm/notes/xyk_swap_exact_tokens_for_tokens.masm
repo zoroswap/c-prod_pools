@@ -17,7 +17,6 @@ pub proc main
     # => [num_storage_items]
     drop
     # Push P2ID_SCRIPT_ROOT word (mem[8..11])
-    ### @todo verify if not le
     padw mem_loadw_le.8
     # => [P2ID_SCRIPT_ROOT]
 

@@ -95,10 +95,10 @@ async fn swap_tokens_for_exact_tokens_happy_path_test() -> Result<()> {
 
     let swap_serial_num = swap_note.serial_num();
     let p2id_serial_num: Word = [
-        swap_serial_num[0],
+        swap_serial_num[0] + Felt::ONE,
         swap_serial_num[1],
         swap_serial_num[2],
-        swap_serial_num[3] + Felt::ONE,
+        swap_serial_num[3],
     ]
     .into();
 
@@ -131,6 +131,14 @@ async fn swap_tokens_for_exact_tokens_happy_path_test() -> Result<()> {
         .await?;
     setup.clients.client.sync_state().await?;
     println!("---------------------------Consuming swap note---------------------------");
+
+    println!("-------------------------------- return ptid note --------------------------------");
+    println!("return note digest: {:?}", return_note.recipient().digest());
+    println!("return note serial: {:?}", return_note.serial_num());
+    println!("return note type: {:?}", return_note.metadata().note_type());
+    println!("return note tag: {:?}", return_note.metadata().tag());
+    println!("return note assets: {:?}", return_note.assets());
+    println!("-------------------------------- return ptid note --------------------------------");
 
     tokio::time::sleep(Duration::from_secs(1)).await;
     let user_consume_return_note_request =
@@ -304,13 +312,6 @@ async fn swap_exact_tokens_for_tokens_happy_path_test() -> Result<()> {
     let metadata = PartialNoteMetadata::new(setup.contract.id(), return_note_type).with_tag(tag);
     let vault = NoteAssets::new(vec![FungibleAsset::new(token1_id, expected_out)?.into()])?;
     let return_note = Note::new(vault, metadata, recipient);
-    println!("-------------------------------- return ptid note --------------------------------");
-    println!("return note digest: {:?}", return_note.recipient().digest());
-    println!("return note serial: {:?}", return_note.serial_num());
-    println!("return note type: {:?}", return_note.metadata().note_type());
-    println!("return note tag: {:?}", return_note.metadata().tag());
-    println!("return note assets: {:?}", return_note.assets());
-    println!("-------------------------------- return ptid note --------------------------------");
 
     setup
         .clients

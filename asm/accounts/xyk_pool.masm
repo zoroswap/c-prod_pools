@@ -134,6 +134,7 @@ pub proc get_amount_out_u64(amount_in: felt, reserve_in: felt, reserve_out: felt
     # => [amount_out]    exec.sys::truncate_stack
 end
 
+#@todo factor out fee amount and make it configurable
 @locals(3)
 pub proc get_amount_in_u64(amount_out: felt, reserve_in: felt, reserve_out: felt) -> felt
     # loc.0: reserve_in
@@ -144,31 +145,31 @@ pub proc get_amount_in_u64(amount_out: felt, reserve_in: felt, reserve_out: felt
     
     # amount_out
     loc_load.2 u32split 
-    # => [amount_out_high, amount_out_low]
+    # => [amount_out_lo, amount_out_hi]
     push.1000 u32split
-    # => [1000_high, 1000_low, amount_out_high, amount_out_low]
+    # => [1000_lo, 1000_hi, amount_out_lo, amount_out_hi]
     # @note: consider overflowing mul
     exec.u64::wrapping_mul
-    # => [amount_out_scaled_high, amount_out_scaled_low]
+    # => [amount_out_scaled_lo, amount_out_scaled_hi]
     ## reserve_in 
     loc_load.0 u32split 
-    # => [reserve_in_high, reserve_in_low, amount_out_scaled_high, amount_out_scaled_low]
+    # => [reserve_in_lo, reserve_in_hi, amount_out_scaled_lo, amount_out_scaled_hi]
     # numerator = amount_out_scaled * reserve_in
     exec.u64::wrapping_mul
-    # => [numerator_scaled_high, numerator_scaled_low]
+    # => [numerator_scaled_lo, numerator_scaled_hi]
     ## denominator = (reserve_out - amount_out) * (1-fee)
     ## reserve_out
     loc_load.1 u32split 
-    # => [reserve_out_high, reserve_out_low, numerator_scaled_high, numerator_scaled_low]
+    # => [reserve_out_lo, reserve_out_hi, numerator_scaled_lo, numerator_scaled_hi]
     ## amount_out
     loc_load.2 u32split
-    # => [amount_out_high, amount_out_low, reserve_out_high, reserve_out_low, numerator_scaled_high, numerator_scaled_low]
+    # => [amount_out_lo, amount_out_hi, reserve_out_lo, reserve_out_hi, numerator_scaled_lo, numerator_scaled_hi]
     exec.u64::wrapping_sub
-    # => [denominator_high, denominator_low, numerator_scaled_high, numerator_scaled_low]
+    # => [denominator_lo, denominator_hi, numerator_scaled_lo, numerator_scaled_hi]
     push.997 u32split exec.u64::wrapping_mul
-    # => [denominator_with_fee_high, denominator_with_fee_low, numerator_high, numerator_low]
+    # => [denominator_with_fee_lo, denominator_with_fee_hi, numerator_scaled_lo, numerator_scaled_hi]
     exec.u64::div
-    # => [amount_in_high, amount_in_low]
+    # => [amount_in_lo, amount_in_hi]
     exec.math::safe_cast_u64_into_felt
     # => [amount_in]
     exec.sys::truncate_stack
@@ -240,35 +241,35 @@ pub proc swap_exact_tokens_for_tokens(user_id_prefix: felt, user_id_suffix: felt
 end
 
 @locals(3)
-pub proc swap_tokens_for_exact_tokens(user_id_prefix: felt, user_id_suffix: felt, asset_out: word, max_asset_in: word, note_tag: felt, note_type: felt, p2id_script_root: word) -> felt
-
+pub proc swap_tokens_for_exact_tokens(user_id_suffix: felt, user_id_prefix: felt, asset_max_asset_in: word, out: word, note_tag: felt, note_type: felt, p2id_script_root: word) -> felt
+    # loc.0: ??
+    # loc.1: amount_in
+    # loc.2: remaining_amount_in
     # Initial stack
-    # => [sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
+    # => [sender_suffix, sender_prefix , ASSET_IN_MAX, ASSET_OUT, note_tag, note_type, P2ID_SCRIPT_ROOT]
 
     # get SERIAL of this note
-    exec.active_note::get_serial_number
+    exec.active_note::get_serial_number mem_storew_le.INPUT_NOTE_SERIAL dropw
     # => [serial_num, sender_prefix, sender_suffix, ASSET_IN, MIN_ASSET_OUT_WORD, note_tag, note_type, P2ID_SCRIPT_ROOT]
  
     # store user account id
-    mem_storew_le.INPUT_NOTE_SERIAL dropw
-    # store user account id
-    mem_store.USER_ACCOUNT_ID_PREFIX mem_store.USER_ACCOUNT_ID_SUFFIX
+    mem_store.USER_ACCOUNT_ID_SUFFIX mem_store.USER_ACCOUNT_ID_PREFIX
     ### mem store asset in, min asset out
   
-    mem_storew_le.ASSET_OUT_WORD dropw mem_storew_le.ASSET_IN_WORD dropw
+    mem_storew_le.ASSET_IN_WORD dropw mem_storew_le.ASSET_OUT_WORD dropw
 
     ### store note metadata in memory
     mem_store.RETURN_NOTE_TAG mem_store.RETURN_NOTE_TYPE mem_storew_le.P2ID_SCRIPT_ROOT dropw
 
-    mem_load.ASSET_OUT_ID_SUFFIX mem_load.ASSET_OUT_ID_PREFIX 
+    mem_load.ASSET_OUT_ID_PREFIX mem_load.ASSET_OUT_ID_SUFFIX 
     exec.get_reserve_by_asset_id
     # => [reserve_out]
-    mem_load.ASSET_IN_ID_SUFFIX mem_load.ASSET_IN_ID_PREFIX 
+    mem_load.ASSET_IN_ID_PREFIX mem_load.ASSET_IN_ID_SUFFIX 
     exec.get_reserve_by_asset_id
     # => [reserve_in, reserve_out]
     mem_load.AMOUNT_OUT
     # => [amount_out, reserve_in, reserve_out]
-    exec.get_amount_in_u64 loc_store.1 loc_load.1
+    exec.get_amount_in_u64 dup loc_store.1
     # => [amount_in]
     mem_load.AMOUNT_IN
     # => [max_amount_in, amount_in]
@@ -315,6 +316,7 @@ pub proc swap_tokens_for_exact_tokens(user_id_prefix: felt, user_id_suffix: felt
         loc_load.2
         # => [remaining_amount_in, ASSET_IN, note_id]
         swap.4 drop
+        # => [REMAINING_ASSET_IN, note_id]
         exec.asset_utils::expand_asset
         exec.output_note::add_asset
         # => [note_id]

@@ -1,4 +1,5 @@
 use miden::protocol::active_note
+use zoro::asset_utils
 use zoro::xyk_pool
 use miden::core::sys
 
@@ -15,9 +16,8 @@ pub proc main
     push.0 exec.active_note::get_storage drop drop
     # => [num_storage_items, dest_ptr]
 
-    # Push RECIPIENT word (mem[8..11])
-    ### @todo verify if not le
-    padw mem_loadw_be.8
+    # Push P2ID_SCRIPT_ROOT word (mem[8..11])
+    padw mem_loadw_le.8
     # => [P2ID_SCRIPT_ROOT]
 
     # Push note_type, note_tag
@@ -30,12 +30,12 @@ pub proc main
 
     # Load note asset to memory at ptr=40
     push.40 exec.active_note::get_assets
-    # => [num_assets, 40, ...]
-    swap drop
+    # => [num_assets, ...]
     push.EXPECTED_NUM_ASSETS eq assert.err=ERR_INVALID_NUM_ASSETS
-    # => [40, ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
-    padw mem_loadw_be.40
-    # => [ASSET_OUT, MAX_ASSET_IN, note_tag, note_type, P2ID_SCRIPT_ROOT]
+    # => [ASSET_OUT_WORD, deadline, note_tag, note_type, P2ID_SCRIPT_ROOT]
+        # Load ASSET_IN word
+    padw mem_loadw_le.44 padw mem_loadw_le.40 exec.asset_utils::compress_asset
+    # => [MAX_ASSET_IN, ASSET_OUT, note_tag, note_type, P2ID_SCRIPT_ROOT]
 
     # load user_id (sender)
     exec.active_note::get_sender

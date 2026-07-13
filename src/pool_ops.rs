@@ -52,8 +52,10 @@ fn merge_static_error_codes(library: Arc<Library>, static_libs: &[Arc<Library>])
             .collect();
         forest.debug_info_mut().extend_error_codes(codes);
     }
-    let exports: BTreeMap<Arc<AssemblyPath>, LibraryExport> =
-        library.exports().map(|export| (export.path(), export.clone())).collect();
+    let exports: BTreeMap<Arc<AssemblyPath>, LibraryExport> = library
+        .exports()
+        .map(|export| (export.path(), export.clone()))
+        .collect();
     Arc::new(
         Library::new(Arc::new(forest), exports)
             .expect("merging error codes must not change exports or MAST roots"),
@@ -62,7 +64,10 @@ fn merge_static_error_codes(library: Arc<Library>, static_libs: &[Arc<Library>])
 
 /// Same fix as [`merge_static_error_codes`], but for an assembled [`Program`] (e.g. transaction
 /// scripts), which go through the same static-linking code path.
-fn merge_static_error_codes_into_program(program: Program, static_libs: &[Arc<Library>]) -> Program {
+fn merge_static_error_codes_into_program(
+    program: Program,
+    static_libs: &[Arc<Library>],
+) -> Program {
     if static_libs.is_empty() {
         return program;
     }
@@ -76,7 +81,11 @@ fn merge_static_error_codes_into_program(program: Program, static_libs: &[Arc<Li
             .collect();
         forest.debug_info_mut().extend_error_codes(codes);
     }
-    Program::with_kernel(Arc::new(forest), program.entrypoint(), program.kernel().clone())
+    Program::with_kernel(
+        Arc::new(forest),
+        program.entrypoint(),
+        program.kernel().clone(),
+    )
 }
 
 pub fn create_library(
@@ -615,8 +624,8 @@ pub fn build_xyk_swap_tokens_for_exact_tokens_note(
     let script = compile_xyk_swap_tokens_for_exact_tokens_note_script(xyk_pool_library)?;
     let p2id_root = get_p2id_root_hash();
     let storage = NoteStorage::new(vec![
-        exact_output_asset.faucet_id().prefix().as_felt(),
         exact_output_asset.faucet_id().suffix(),
+        exact_output_asset.faucet_id().prefix().as_felt(),
         Felt::ZERO,
         Felt::new(exact_output_asset.amount().as_u64())?,
         Felt::new(deadline)?,
