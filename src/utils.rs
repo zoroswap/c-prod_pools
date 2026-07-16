@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf, sync::Arc};
 use anyhow::{Result, anyhow};
 use miden_client::account::component::BasicWallet;
 use miden_client::account::{
-    AccountBuilder, AccountBuilderSchemaCommitmentExt, AccountComponent, AccountType, StorageSlot,
+    AccountBuilder, AccountComponent, AccountType, StorageSlot,
 };
 use miden_client::auth::{AuthSchemeId, AuthSecretKey, AuthSingleSig, NoAuth};
 use miden_client::note::{NoteError, StandardNote};
@@ -124,7 +124,9 @@ pub fn get_pool_account_code_commitment() -> Word {
         .with_component(xyk_pool_component)
         .with_auth_component(NoAuth)
         .with_component(BasicWallet)
-        .build_with_schema_commitment()
+        // Keep this identical to `deploy_combined_pool`; schema-commitment builds produce
+        // a different account code commitment than the pool deployed with `build()`.
+        .build()
         .map_err(|e| anyhow!("Failed to build combined pool contract: {e:?}"))
         .unwrap();
 

@@ -168,7 +168,7 @@ pub async fn lp_local_deposit(
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-fn resolve_endpoint() -> (String, Endpoint) {
+pub fn resolve_endpoint() -> (String, Endpoint) {
     let label = env::var("MIDEN_NODE_ENDPOINT").unwrap_or_else(|_| "localhost".to_string());
     let endpoint = match label.as_str() {
         "testnet" => Endpoint::testnet(),
@@ -501,10 +501,11 @@ pub async fn setup_combined_pool_test_environment() -> Result<TestSetup> {
 
     let token0_id = faucets[0].faucet.id();
     let token1_id = faucets[1].faucet.id();
+    let accepted_pool_code_hashes = [get_pool_account_code_commitment()];
     let (registry, _) = deploy_registry(
         &mut clients.client,
         keystore.clone(),
-        get_pool_account_code_commitment(),
+        &accepted_pool_code_hashes,
     )
     .await?;
 
@@ -587,10 +588,11 @@ pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
     let token0_id = faucets[0].faucet.id();
     let token1_id = faucets[1].faucet.id();
 
+    let accepted_pool_code_hashes = [get_pool_account_code_commitment()];
     let (registry, _) = deploy_registry(
         &mut clients.client,
         keystore.clone(),
-        get_pool_account_code_commitment(),
+        &accepted_pool_code_hashes,
     )
     .await?;
 
@@ -608,11 +610,13 @@ pub async fn setup_registry_test_environment() -> Result<RegistryTestSetup> {
     println!("====== XYK POOL DEPLOYED");
 
     let pool_code_hash = pool.code().commitment();
-    println!(
-        "Pool code generated commitment: {:?}",
-        get_pool_account_code_commitment()
-    );
+    let generated_pool_code_hash = get_pool_account_code_commitment();
+    println!("Pool code generated commitment: {generated_pool_code_hash:?}");
     println!("Pool code commitment: {:?}", pool_code_hash);
+    assert_eq!(
+        generated_pool_code_hash, pool_code_hash,
+        "registry seed must match the deployed pool code commitment"
+    );
 
     let pool_tag = NoteTag::with_account_target(pool.id());
     let registry_tag = NoteTag::with_account_target(registry.id());

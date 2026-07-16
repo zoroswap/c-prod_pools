@@ -561,28 +561,29 @@ pub async fn deploy_storage_fuzz_dummy(
     Ok((dummy_contract, key_pair))
 }
 
-/// Deploys a registry account pre-seeded with an accepted pool code hash.
+/// Deploys a registry account pre-seeded with accepted pool code hashes.
 ///
 /// Storage slots (must match constants in registry.masm):
-///   - `accepted_code_hashes_mapping`: map with pool_code_hash → [1, 0, 0, 0]
+///   - `accepted_code_hashes_mapping`: map with each pool_code_hash → [1, 0, 0, 0]
 ///   - `pools_mapping`: empty map
 ///   - `assets_to_pool_mapping`: empty map
 pub async fn deploy_registry(
     client: &mut MidenClient,
     keystore: FilesystemKeyStore,
-    accepted_pool_code_hash: Word,
+    accepted_pool_code_hashes: &[Word],
 ) -> Result<(Account, AuthSecretKey), ClientError> {
     let registry_library = get_registry_library()
         .map_err(|e| ClientError::NoteError(NoteError::other(e.to_string())))?;
 
     let mut accepted_hashes_map = StorageMap::new();
 
-    println!("account pool code hash {:?}", accepted_pool_code_hash);
-
-    accepted_hashes_map.insert(
-        StorageMapKey::new(accepted_pool_code_hash),
-        Word::new([Felt::ONE, Felt::ZERO, Felt::ZERO, Felt::ZERO]),
-    )?;
+    for code_hash in accepted_pool_code_hashes {
+        println!("Accepted pool code hash: {code_hash:?}");
+        accepted_hashes_map.insert(
+            StorageMapKey::new(*code_hash),
+            Word::new([Felt::ONE, Felt::ZERO, Felt::ZERO, Felt::ZERO]),
+        )?;
+    }
     let accepted_hashes_slot = StorageSlot::with_map(
         slot_name("zoro::registry::accepted_code_hashes_mapping"),
         accepted_hashes_map,
@@ -620,9 +621,9 @@ pub async fn deploy_registry(
         .unwrap();
 
     println!(
-        "Registry deployed => ID: {}, accepted code hash: {}",
+        "Registry deployed => ID: {}, accepted code hashes: {}",
         registry.id().to_hex(),
-        accepted_pool_code_hash,
+        accepted_pool_code_hashes.len(),
     );
 
     keystore.add_key(&key_pair, registry.id()).await.unwrap();

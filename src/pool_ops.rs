@@ -489,7 +489,7 @@ pub fn compile_xyk_swap_exact_tokens_for_tokens_note_script(
 pub fn build_dummy_register_note(registry_id: &AccountId, serial_num: Word) -> Note {
     let script = compile_xyk_register_note_script().unwrap();
     let assets = NoteAssets::new(vec![]).unwrap();
-    let tag = NoteTag::with_account_target(*registry_id);
+    let tag = NoteTag::new(0);
     let metadata = PartialNoteMetadata::new(*registry_id, NoteType::Public).with_tag(tag);
     let storage = NoteStorage::new(
         [
